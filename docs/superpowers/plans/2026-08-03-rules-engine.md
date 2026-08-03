@@ -388,9 +388,18 @@ export const ECONOMY = {
   /** Paid when a player cannot cover face value of any remaining deed in a draft round. */
   DRAFT_SKIP_COMPENSATION: 150 as Money,
 
-  /** Borrowing base = deed face x this + building cost x BUILDING_ADVANCE_RATE. */
+  /**
+   * Borrowing base = deed face x this + building cost x BUILDING_ADVANCE_RATE.
+   * BUILDING_ADVANCE_RATE must never exceed BUILDING_SELLBACK_RATE, or stripping a
+   * developed deed during liquidation widens the shortfall. Asserted at startup.
+   */
   DEED_ADVANCE_RATE: 0.75,
   BUILDING_ADVANCE_RATE: 0.5,
+
+  /** Houses cost 90% of standard, offsetting carrying-cost development suppression. */
+  HOUSE_COST_MULTIPLIER: 0.9,
+  /** Buildings sell back to the bank at half the price paid. */
+  BUILDING_SELLBACK_RATE: 0.5,
 
   /** Prevailing per-round interest on drawn credit, by era. */
   INTEREST_RATE_BY_ERA: { 1: 0.05, 2: 0.06, 3: 0.08, 4: 0.12 } as Record<Era, number>,

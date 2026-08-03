@@ -95,7 +95,9 @@ the engine must implement it and the landing-probability model depends on some o
   sets, railroads at $25/$50/$100/$200 for one through four owned, and utilities at 4x
   or 10x the dice roll for one or two owned.
 - **Building** requires ownership of the full unmortgaged colour group and follows the
-  even-build rule. House and hotel costs are standard.
+  even-build rule. **House and hotel costs are 90% of standard**, to offset the
+  development suppression caused by the carrying cost. Buildings sell back to the bank
+  at 50% of the price paid.
 - **House and hotel supply is limited** to 32 houses and 12 hotels. The housing shortage
   is a legitimate and deliberate strategy.
 - **Mortgages** pay 50% of face value; unmortgaging costs 55%. A mortgaged property
@@ -482,7 +484,7 @@ in which vice appears to be free money.
 
 | Venture | Cost | Duration | Effect | Heat |
 |---|---|---|---|---|
-| **Escort Service** | $300 | 4 rounds | +40% of all rent collected, paid in dirty cash | +2 |
+| **Escort Service** | $150 | 4 rounds | +60% of all rent charged on your deeds, paid in dirty cash | +2 |
 | **Numbers Racket** | $150 | 6 rounds | +$60 dirty per round, flat | +2 |
 | **Chop Shop** | $250 | 4 rounds | +$150 dirty each time any opponent lands on a deed you own | +3 |
 | **Speakeasy** | $250 | one-shot | Roll 2d6 against the payout table below, paid in dirty cash | +2 |
@@ -724,6 +726,14 @@ margin call" or "your audit probability this round is 58%".
 It never ranks or recommends actions. Driven by deterministic heuristics computed in
 the engine — not an LLM, because there is no key and it must be instant. The goal is to
 close the information gap between players without closing the skill gap.
+
+**Venture payoffs must always be shown at their laundered value, never their dirty
+value.** Simulation puts the gap between correct and naive underworld play at roughly
+$1,290 — the largest skill cliff anywhere in the economy — and it exists almost entirely
+because ventures cost clean cash and pay dirty, so a venture must return over 133% of
+its cost merely to break even before Heat is counted. A player reading the raw dirty
+figure walks straight into it. Displaying the laundered number is the single highest-value
+thing the assist panel does.
 
 ### Facilitator agent
 
@@ -1102,16 +1112,38 @@ a 36-round game spends eighteen.
 require capping Era IV at 8–10% and giving the Treasury a spending mechanism. The
 carrying cost is not what would need to change.
 
-### Known open item: development suppression
+### Development, and why building is aggressive
 
-Under this configuration players build roughly 22% fewer houses (15.2 versus 19.5),
-purely because they hold less cash — buildings are already exempt from the carrying
-cost and count 50% toward the borrowing base.
+Building aggression is not a tunable assumption — it is an equilibrium. Run as a
+tournament with two players on each policy at the same table sharing the same dice,
+aggressive building wins at every level tested (55%, 54%, 52%, 51%), flattening around
+a 0.75 cash-reserve ratio.
 
-The simulation's builder heuristic is not carrying-cost-aware, so a thinking player
-would likely under-build further, meaning this figure understates the effect. Fewer
-houses means lower rents, which flattens the rent futures market the design depends on.
+The cause is in section 12: **buildings are scored at full cost.** Building therefore
+converts cash into an asset marked at par which also earns rent, so the cautious policy
+is dominated. A player who under-builds to stay liquid loses.
 
-A building subsidy is the likely remedy and is under test. This is the one economic
-parameter not yet settled; it is isolated in the config module and affects no
-interface.
+At that equilibrium the carrying cost suppresses development by **13%** — 17.0 houses
+against a levy-free control of 19.6. House costs are accordingly set to **90% of
+standard**, which recovers about 65% of the gap at 18.7 houses while leaving credit
+pressure, distress rates, money supply and draft fairness essentially unmoved.
+
+The exchange rate for further cuts, should playtesting show rents still too flat: each
+additional 10% price cut buys +1.5 houses and +1.5 percentage points of early-monopoly
+win rate. Development is cheap in credit terms and expensive in fairness terms — the
+early-monopoly net worth edge widens from +13% to +31% at a 30% cut. A 20% cut is the
+next step if needed; beyond that the fairness cost dominates.
+
+### Rejected: raising the building advance rate
+
+Advancing 75% against building cost instead of 50% was tested. It does almost nothing
+for development (17.0 to 17.5 houses) though it does raise peak table debt to $3,230,
+which would help the securitization layer.
+
+**It is rejected because it breaks liquidation convergence.** Buildings sell back at 50%
+of cost, so if they advanced at 75% of cost, stripping a developed deed would widen the
+shortfall by 25% of building cost — the same class of bug as the liquidation floor
+in section 5.
+
+`BUILDING_ADVANCE_RATE` must never exceed the building sell-back rate. The engine
+asserts this alongside the floor-versus-advance-rate check.

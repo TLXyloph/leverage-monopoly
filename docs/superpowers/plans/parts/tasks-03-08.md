@@ -1788,3 +1788,328 @@ per spec 19.2, and nobody pays themselves."
 ```
 
 ---
+
+### Task 7: `board` context — the Markov landing model
+
+`tests/fixtures/landing-probabilities.json` is authoritative. It was derived
+three independent ways (power iteration, a linear solve of `π(P − I) = 0`
+agreeing to 2.1e-16, and a 40-million-roll Monte Carlo). **If the implementation
+disagrees with the fixture, the implementation is wrong.** The fixture assumes
+no card movement — squares 2, 7, 17, 22, 33 and 36 are ordinary resting squares
+— and mandatory pay-to-leave-jail, so square 30 is the only relocating square
+on the board and rolling for doubles to escape jail is not modelled because it
+is not offered.
+
+**Files:**
+- Create: `packages/engine/src/contexts/board/markov.ts`
+- Modify: `packages/engine/src/contexts/board/index.ts`
+- Test: `packages/engine/src/contexts/board/markov.test.ts`
+
+**Interfaces:**
+- Consumes: `BOARD_SIZE`, `DOUBLES_ROLL_MULTIPLIER`, `GO_TO_JAIL_SQUARE`, `GROUP_MEMBERS`, `JAIL_SQUARE`, `deedById` from `config/board.js`; `PLAYER_IDS` from `core/types.js`.
+- Produces:
+  - `function buildTransitionMatrix(): readonly (readonly number[])[]` (120 x 120)
+  - `const LANDING_PROBABILITIES: readonly number[]` (length 40, sums to 1)
+  - `function landingProbability(square: SquareIndex): number`
+  - `function landingProbabilityOfDeed(deedId: DeedId): number`
+  - `function expectedHitsPerRound(deedId: DeedId): number`
+  - `function expectedHitsOverWindow(deedId: DeedId, rounds: number): number`
+  - `function groupTraffic(group: ColorGroup): { readonly combined: number; readonly perSquare: number }`
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/engine/src/contexts/board/markov.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import {
+  LANDING_PROBABILITIES, buildTransitionMatrix, expectedHitsOverWindow,
+  expectedHitsPerRound, groupTraffic, landingProbability, landingProbabilityOfDeed,
+} from './index.js'
+import { DOUBLES_ROLL_MULTIPLIER, GO_TO_JAIL_SQUARE, JAIL_SQUARE } from '../../config/board.js'
+import type { ColorGroup } from '../../core/types.js'
+
+interface FixtureRow {
+  readonly index: number
+  readonly name: string
+  readonly probability: number
+}
+
+const FIXTURE: readonly FixtureRow[] = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL('../../../../../tests/fixtures/landing-probabilities.json', import.meta.url),
+    ),
+    'utf8',
+  ),
+) as readonly FixtureRow[]
+
+describe('the landing model reproduces the golden fixture', () => {
+  it('matches every one of the 40 squares to within 1e-9', () => {
+    expect(FIXTURE).toHaveLength(40)
+    for (const row of FIXTURE) {
+      expect(
+        landingProbability(row.index),
+        `square ${row.index} (${row.name})`,
+      ).toBeCloseTo(row.probability, 9)
+    }
+  })
+
+  it('is a probability distribution over the 40 squares', () => {
+    const total = LANDING_PROBABILITIES.reduce((a, b) => a + b, 0)
+    expect(total).toBeCloseTo(1, 12)
+    expect(LANDING_PROBABILITIES.every((p) => p >= 0)).toBe(true)
+  })
+
+  it('never rests on Go To Jail', () => {
+    expect(landingProbability(GO_TO_JAIL_SQUARE)).toBe(0)
+  })
+
+  it('makes Jail the most-landed square on the board', () => {
+    const max = Math.max(...LANDING_PROBABILITIES)
+    expect(landingProbability(JAIL_SQUARE)).toBe(max)
+    expect(landingProbability(JAIL_SQUARE) * 100).toBeCloseTo(5.33, 2)
+  })
+
+  it('reproduces the transition structure: every row sums to 1', () => {
+    const matrix = buildTransitionMatrix()
+    expect(matrix).toHaveLength(120)
+    for (const [index, row] of matrix.entries()) {
+      expect(row, `row ${index}`).toHaveLength(120)
+      expect(row.reduce((a, b) => a + b, 0), `row ${index}`).toBeCloseTo(1, 12)
+    }
+  })
+})
+
+describe('traffic by group, spec section 20', () => {
+  it('matches the published per-square figures', () => {
+    const expected: readonly [ColorGroup, number, number][] = [
+      ['railroad', 9.97, 2.49],
+      ['orange', 8.23, 2.74],
+      ['yellow', 8.10, 2.70],
+      ['red', 8.02, 2.67],
+      ['green', 7.74, 2.58],
+      ['pink', 7.25, 2.42],
+      ['light-blue', 6.82, 2.27],
+      ['utility', 5.06, 2.53],
+      ['brown', 4.63, 2.31],
+      ['dark-blue', 4.44, 2.22],
+    ]
+    for (const [group, combined, perSquare] of expected) {
+      const traffic = groupTraffic(group)
+      expect(traffic.combined * 100, `${group} combined`).toBeCloseTo(combined, 2)
+      expect(traffic.perSquare * 100, `${group} per square`).toBeCloseTo(perSquare, 2)
+    }
+  })
+
+  it('keeps orange the strongest colour group per square', () => {
+    const colours: readonly ColorGroup[] = [
+      'brown', 'light-blue', 'pink', 'orange', 'red', 'yellow', 'green', 'dark-blue',
+    ]
+    const best = colours.reduce((a, b) =>
+      groupTraffic(a).perSquare >= groupTraffic(b).perSquare ? a : b)
+    expect(best).toBe('orange')
+  })
+
+  it('makes Tennessee Avenue the busiest and Park Place the quietest property', () => {
+    expect(landingProbabilityOfDeed('tennessee-avenue') * 100).toBeCloseTo(2.77, 2)
+    expect(landingProbabilityOfDeed('park-place') * 100).toBeCloseTo(2.19, 2)
+    expect(landingProbabilityOfDeed('boardwalk'))
+      .toBeLessThan(landingProbabilityOfDeed('mediterranean-avenue'))
+  })
+})
+
+describe('expected hits, spec section 19.2', () => {
+  it('scales per-roll probability by three payers and the doubles factor', () => {
+    const p = landingProbabilityOfDeed('boardwalk')
+    expect(expectedHitsPerRound('boardwalk')).toBeCloseTo(p * 3 * DOUBLES_ROLL_MULTIPLIER, 12)
+    expect(expectedHitsOverWindow('boardwalk', 8))
+      .toBeCloseTo(expectedHitsPerRound('boardwalk') * 8, 12)
+  })
+
+  it('returns zero for a deed that does not exist', () => {
+    expect(expectedHitsPerRound('not-a-deed')).toBe(0)
+    expect(landingProbabilityOfDeed('not-a-deed')).toBe(0)
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run packages/engine/src/contexts/board/markov.test.ts`
+Expected: FAIL — none of the model exports resolve.
+
+- [ ] **Step 3: Write the transition matrix in `contexts/board/markov.ts`**
+
+```ts
+import {
+  BOARD_SIZE, DOUBLES_ROLL_MULTIPLIER, GO_TO_JAIL_SQUARE,
+  GROUP_MEMBERS, JAIL_SQUARE, deedById,
+} from '../../config/board.js'
+import { PLAYER_IDS } from '../../core/types.js'
+import type { ColorGroup, DeedId, SquareIndex } from '../../core/types.js'
+
+/** Consecutive-doubles counter: 0, 1 or 2. The third double jails. */
+const DOUBLES_STATES = 3
+const STATE_COUNT = BOARD_SIZE * DOUBLES_STATES
+const ROLL_PROBABILITY = 1 / 36
+
+function stateIndex(square: number, doubles: number): number {
+  return square * DOUBLES_STATES + doubles
+}
+
+/**
+ * One step of this chain is ONE DIE ROLL. Square 30 is the only relocating
+ * square: the era decks contain no movement cards, so squares 2, 7, 17, 22, 33
+ * and 36 are ordinary resting squares. Spec section 20.
+ */
+export function buildTransitionMatrix(): readonly (readonly number[])[] {
+  const matrix: number[][] = Array.from(
+    { length: STATE_COUNT },
+    () => new Array<number>(STATE_COUNT).fill(0),
+  )
+  for (let square = 0; square < BOARD_SIZE; square += 1) {
+    for (let doubles = 0; doubles < DOUBLES_STATES; doubles += 1) {
+      const row = matrix[stateIndex(square, doubles)]
+      if (row === undefined) continue
+      for (let die1 = 1; die1 <= 6; die1 += 1) {
+        for (let die2 = 1; die2 <= 6; die2 += 1) {
+          const isDouble = die1 === die2
+          if (isDouble && doubles === DOUBLES_STATES - 1) {
+            const jail = stateIndex(JAIL_SQUARE, 0)
+            row[jail] = (row[jail] ?? 0) + ROLL_PROBABILITY
+            continue
+          }
+          const raw = (square + die1 + die2) % BOARD_SIZE
+          const jailed = raw === GO_TO_JAIL_SQUARE
+          const destination = jailed ? JAIL_SQUARE : raw
+          const nextDoubles = jailed ? 0 : isDouble ? doubles + 1 : 0
+          const target = stateIndex(destination, nextDoubles)
+          row[target] = (row[target] ?? 0) + ROLL_PROBABILITY
+        }
+      }
+    }
+  }
+  return matrix
+}
+```
+
+- [ ] **Step 4: Add the stationary solve and the public reads**
+
+Append to `packages/engine/src/contexts/board/markov.ts`:
+
+```ts
+const CONVERGENCE_TOLERANCE = 1e-15
+const MAX_ITERATIONS = 5000
+
+function stationaryDistribution(
+  matrix: readonly (readonly number[])[],
+): readonly number[] {
+  const size = matrix.length
+  let current = new Array<number>(size).fill(1 / size)
+  for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
+    const next = new Array<number>(size).fill(0)
+    for (let i = 0; i < size; i += 1) {
+      const weight = current[i] ?? 0
+      if (weight === 0) continue
+      const row = matrix[i]
+      if (row === undefined) continue
+      for (let j = 0; j < size; j += 1) {
+        const p = row[j] ?? 0
+        if (p !== 0) next[j] = (next[j] ?? 0) + weight * p
+      }
+    }
+    let total = 0
+    for (const value of next) total += value
+    let drift = 0
+    for (let j = 0; j < size; j += 1) {
+      const normalised = (next[j] ?? 0) / total
+      drift += Math.abs(normalised - (current[j] ?? 0))
+      next[j] = normalised
+    }
+    current = next
+    if (drift < CONVERGENCE_TOLERANCE) break
+  }
+  return current
+}
+
+/** Steady-state probability that a single die roll ends on each square. */
+export const LANDING_PROBABILITIES: readonly number[] = (() => {
+  const states = stationaryDistribution(buildTransitionMatrix())
+  const squares = new Array<number>(BOARD_SIZE).fill(0)
+  for (let square = 0; square < BOARD_SIZE; square += 1) {
+    let total = 0
+    for (let doubles = 0; doubles < DOUBLES_STATES; doubles += 1) {
+      total += states[stateIndex(square, doubles)] ?? 0
+    }
+    squares[square] = total
+  }
+  return squares
+})()
+
+export function landingProbability(square: SquareIndex): number {
+  return LANDING_PROBABILITIES[square] ?? 0
+}
+
+export function landingProbabilityOfDeed(deedId: DeedId): number {
+  const deed = deedById(deedId)
+  return deed === null ? 0 : landingProbability(deed.square)
+}
+
+/**
+ * Spec section 19.2: per-roll probability x the number of players who can owe
+ * rent (everyone but the owner) x 1.19 for the extra rolls doubles generate.
+ */
+export function expectedHitsPerRound(deedId: DeedId): number {
+  return landingProbabilityOfDeed(deedId)
+    * (PLAYER_IDS.length - 1)
+    * DOUBLES_ROLL_MULTIPLIER
+}
+
+export function expectedHitsOverWindow(deedId: DeedId, rounds: number): number {
+  return expectedHitsPerRound(deedId) * Math.max(0, rounds)
+}
+
+export function groupTraffic(
+  group: ColorGroup,
+): { readonly combined: number; readonly perSquare: number } {
+  const members = GROUP_MEMBERS[group]
+  const combined = members.reduce((total, id) => total + landingProbabilityOfDeed(id), 0)
+  return {
+    combined,
+    perSquare: members.length === 0 ? 0 : combined / members.length,
+  }
+}
+```
+
+- [ ] **Step 5: Re-export the model and run the test**
+
+Add `export * from './markov.js'` to `packages/engine/src/contexts/board/index.ts`,
+then run: `npx vitest run packages/engine/src/contexts/board/markov.test.ts`
+Expected: PASS. A failure on the 1e-9 fixture comparison means the transition
+matrix is wrong — check that jail arrival resets the doubles counter, that the
+third double jails without moving, and that no card square relocates.
+
+- [ ] **Step 6: Verify the model is computed once and costs nothing at runtime**
+
+Run: `npx vitest run packages/engine/src/contexts/board/ --reporter=verbose`
+Expected: PASS in well under a second. `LANDING_PROBABILITIES` is a module-level
+constant, so the 120-state solve runs once per process and never during a game.
+
+- [ ] **Step 7: Verify the toolchain and commit**
+
+Run: `npm run typecheck && npm run lint && npm test`
+
+```bash
+git add packages/engine/src/contexts/board/markov.ts packages/engine/src/contexts/board/markov.test.ts packages/engine/src/contexts/board/index.ts
+git commit -m "feat(board): exact Markov landing model over 120 states
+
+Asserted square by square against tests/fixtures/landing-probabilities.json
+to within 1e-9. The fixture is authoritative and independently verified;
+it assumes no card movement and mandatory pay-to-leave-jail, so published
+Monopoly landing tables do not apply and are not used."
+```
+
+---

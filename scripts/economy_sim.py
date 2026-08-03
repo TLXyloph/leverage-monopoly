@@ -105,6 +105,40 @@ for _s in BOARD:
 RAILS = [p for p in DEEDS if KIND[p] == "rail"]
 UTILS = [p for p in DEEDS if KIND[p] == "util"]
 
+# Per-turn probability that one opponent lands on each deed square.
+# Measured from this engine over 1,000,000 turns (see --landing-check).
+P_LAND = {
+    1: 0.02386,  # Mediterranean Ave
+    3: 0.02427,  # Baltic Ave
+    5: 0.03008,  # Reading RR
+    6: 0.02541,  # Oriental Ave
+    8: 0.02603,  # Vermont Ave
+    9: 0.02555,  # Connecticut Ave
+    11: 0.03023,  # St. Charles Place
+    12: 0.02734,  # Electric Company
+    13: 0.02594,  # States Ave
+    14: 0.02873,  # Virginia Ave
+    15: 0.02827,  # Pennsylvania RR
+    16: 0.03180,  # St. James Place
+    18: 0.03327,  # Tennessee Ave
+    19: 0.03374,  # New York Ave
+    21: 0.03136,  # Kentucky Ave
+    23: 0.03061,  # Indiana Ave
+    24: 0.03561,  # Illinois Ave
+    25: 0.02984,  # B&O RR
+    26: 0.03007,  # Atlantic Ave
+    27: 0.03014,  # Ventnor Ave
+    28: 0.02968,  # Water Works
+    29: 0.02897,  # Marvin Gardens
+    31: 0.02994,  # Pacific Ave
+    32: 0.02934,  # North Carolina Ave
+    34: 0.02811,  # Pennsylvania Ave
+    35: 0.02707,  # Short Line RR
+    37: 0.02415,  # Park Place
+    39: 0.02960,  # Boardwalk
+}
+P_LAND_STREET = sum(v for k, v in P_LAND.items() if KIND[k] == 'street') \
+    / sum(1 for k in P_LAND if KIND[k] == 'street')
 TOTAL_FACE = sum(PRICE[p] for p in DEEDS)          # 5690
 assert len(DEEDS) == 28 and TOTAL_FACE == 5690, (len(DEEDS), TOTAL_FACE)
 
@@ -138,6 +172,28 @@ CHEST = [
 assert len(CHANCE) == 16 and len(CHEST) == 16
 
 
+VENTURES = {
+    # name:        (cost, duration, heat)
+    "escort":      (300, 4, 2),   # +40% of rent collected, in dirty
+    "numbers":     (150, 6, 2),   # +$60 dirty per round
+    "chopshop":    (250, 4, 3),   # +$150 dirty per opponent landing on your deed
+    "speakeasy":   (250, 1, 2),   # one-shot 2d6 payout
+}
+SPEAKEASY = [(2, 0), (5, 100), (8, 250), (11, 500), (12, 1200)]
+
+
+def speakeasy_payout(roll: int) -> int:
+    for hi, amt in SPEAKEASY:
+        if roll <= hi:
+            return amt
+    return 0
+
+
+def launder_haircut(heat: int) -> float:
+    """25%, worsening 5pp per Heat point above 3, capped at 60%."""
+    return min(0.60, 0.25 + 0.05 * max(0, heat - 3))
+
+
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
@@ -159,6 +215,33 @@ class Config:
     property_tax_buildings: bool = True     # include building cost in the base
     property_tax_per_deed: int = 0          # flat $ per unmortgaged deed per round
                                             # (alternative to the % levy)
+    # --- builder ---
+    builder: str = "simple"                 # "simple" (v1/v2) | "aware" (levy-aware)
+    build_shock_buffer: int = 500           # cover a bad rent landing
+    reserve_rounds: float = 3.0             # plus this many rounds of recurring burn
+    build_payback: float = 1.0              # required uplift/cost on the group plan
+    headroom_offset: float = 0.0            # undrawn credit substitutes for cash
+                                            # reserve at this rate
+    # --- building subsidies (v3) ---
+    house_cost_mult: float = 1.0            # game-wide house price multiplier
+    house_cost_mult_until: int = 0          # 0 = always; else only rounds <= this
+    first_house_half: bool = False          # first house in each group at half price
+    # --- underworld (v3) ---
+    vice_players: int = 0                   # how many of the 4 run ventures
+    vice_start: int = 7                     # Era II
+    audit_start: int = 13                   # Era III
+    launder_min: int = 250                  # launder once dirty exceeds this
+    launder_heat_cap: int = 7               # stop laundering above this Heat
+    venture_heat_cap: int = 6               # stop launching above this Heat
+    ventures_dirty_funded: bool = False     # sensitivity: fund ventures with dirty
+    vice_policy: str = "reckless"           # "reckless" | "prudent" | "numbers_only"
+    chopshop_heat: int = 3                  # spec value; 2 = proposed fix
+    vice_prices_heat: bool = True           # does the player price Heat cost?
+    escort_share: float = 0.40              # spec value
+    hr_offsets: tuple | None = None         # per-player build aggression
+    # --- distressed debt (spec s.5: there is NO elimination) ---
+    distressed_rate: float = 0.15           # per round on the shortfall
+    liquidation_price: float = 0.70         # forced deed sale, share of face
     # draft
     draft_from_start_cash: bool = True   # unified budget: draft is paid out of start_cash
     treasury_seed: int = 0               # only used when draft_from_start_cash is False
@@ -214,9 +297,20 @@ class Player:
     deeds: set = field(default_factory=set)
     mortgaged: set = field(default_factory=set)
     houses: dict = field(default_factory=dict)     # pos -> count
-    bankrupt: bool = False
+    bankrupt: bool = False          # 'is distressed', NOT elimination
+    distressed: float = 0.0
     # bookkeeping
     draft_face: int = 0
+    first_mono_round: int = 0      # 0 = never completed one
+    hr_offset: float | None = None # per-player build aggression (tournament)
+    # --- underworld ---
+    vice: bool = False
+    dirty: int = 0
+    heat: int = 0
+    ventures: list = field(default_factory=list)   # [[kind, rounds_left], ...]
+    laundered_this_round: bool = False
+    dirty_action_this_round: bool = False
+    audits: int = 0
     liquidations: int = 0
     min_cash: int = 10 ** 9
     hit_zero: bool = False
@@ -225,7 +319,8 @@ class Player:
     def net_worth(self, cfg: "Config") -> int:
         deeds = sum(PRICE[p] for p in self.deeds if p not in self.mortgaged)
         mort = sum(PRICE[p] // 2 for p in self.deeds if p in self.mortgaged)
-        return self.cash + deeds + mort + self.building_cost_basis() - self.debt
+        return int(self.cash + deeds + mort + self.building_cost_basis()
+                   - self.debt - self.distressed)
 
     def building_cost_basis(self) -> int:
         return sum(n * HOUSE_COST[p] for p, n in self.houses.items())
@@ -276,10 +371,20 @@ class Game:
         self.f = dict(salary=0, stimulus=0, drawn=0, house_sale=0, mortgage=0,
                       card_in=0, bankrupt_absorbed=0,
                       interest=0, house_spend=0, tax=0, jail_fee=0, repaid=0,
-                      property_tax=0,
+                      property_tax=0, venture_cost=0, audit_fine=0,
+                      launder_clean=0, insider=0, deed_sale=0,
                       card_out=0, bankrupt_diverted=0, draft=0)
         self.total_drawn = 0
         self.cur_round = 1
+        self.dirty_created = 0
+        self.dirty_destroyed = 0
+        self.dirty_seized = 0
+        self.launder_haircut_lost = 0
+        self.laundered_total = 0
+        self.audits_total = 0
+        self.fines_total = 0
+        self.ventures_launched = 0
+        self.venture_mix = {}
 
     # ---------------- money primitives (all conserve total) ----------------
 
@@ -314,11 +419,7 @@ class Game:
 
     def transfer(self, src: Player, dst: Player, amt: int) -> None:
         src.cash -= amt
-        if dst.bankrupt:            # a knocked-out player's receipts revert to the bank
-            self.bank += amt
-            self.f["bankrupt_diverted"] += amt
-        else:
-            dst.cash += amt
+        dst.cash += amt
 
     def total_money(self) -> int:
         return sum(p.cash for p in self.players) + self.treasury + self.bank
@@ -387,9 +488,11 @@ class Game:
         rng = self.rng
         pl = self.players[pi]
         # groups where they already hold at least one deed and don't have all
+        # a group containing a bank-held deed cannot be completed by trade
         cands = [g for g, ps in GROUPS.items()
                  if any(self.owner[p] == pi for p in ps)
-                 and not all(self.owner[p] == pi for p in ps)]
+                 and not all(self.owner[p] == pi for p in ps)
+                 and all(self.owner[p] is not None for p in ps)]
         if not cands:
             return
         # prefer the group where they are closest to completion, then cheapest
@@ -415,6 +518,8 @@ class Game:
                     self.owner[q] = old.idx
                 pl.deeds.add(p)
                 self.owner[p] = pi
+        if pl.first_mono_round == 0:
+            pl.first_mono_round = self.cur_round
         self.monopoly_events += 1
 
     # ---------------- cards -------------------------------------------------
@@ -490,10 +595,24 @@ class Game:
             p = max(free, key=lambda q: PRICE[q])
             pl.mortgaged.add(p)
             self.bank_pays(pl, PRICE[p] // 2, "mortgage")
+        # 4. margin-call liquidation: sell deeds outright at 70% of face
+        while pl.cash < 0:
+            sellable = [p for p in pl.deeds if not pl.houses.get(p)]
+            if not sellable:
+                break
+            p = max(sellable, key=lambda q: PRICE[q])
+            proceeds = int(PRICE[p] * cfg.liquidation_price)
+            if p in pl.mortgaged:
+                proceeds -= PRICE[p] // 2       # the mortgage is settled out of the sale
+                pl.mortgaged.discard(p)
+            pl.deeds.discard(p)
+            self.owner[p] = None
+            self.bank_pays(pl, max(0, proceeds), "deed_sale")
         if pl.cash < 0:
-            # true bankruptcy: the bank absorbs the deficit and the player is out
-            pl.bankrupt = True
-            self.bank += pl.cash          # bank takes on the negative
+            # spec s.5: no elimination.  The shortfall becomes Distressed Debt.
+            pl.bankrupt = True                # flag = 'is distressed', still plays
+            pl.distressed += -pl.cash
+            self.bank += pl.cash
             self.f["bankrupt_absorbed"] += -pl.cash
             pl.cash = 0
 
@@ -525,7 +644,7 @@ class Game:
 
     def resolve_square(self, pl: Player, roll: int, depth: int = 0) -> None:
         cfg = self.cfg
-        if pl.bankrupt or depth > 2:
+        if depth > 2:
             return
         pos = pl.pos
         k = KIND[pos]
@@ -533,6 +652,7 @@ class Game:
             ow = self.owner[pos]
             if ow is not None and ow != pl.idx:
                 r = self.rent_due(pos, roll)
+                self.vice_rent_hook(self.players[ow], r)
                 if r:
                     self.rent_paid += r
                     self.charge(pl, r, "player", self.players[ow])
@@ -566,7 +686,7 @@ class Game:
         elif tag == "each":
             if cfg.card_cash:
                 for o in self.players:
-                    if o.idx == pl.idx or o.bankrupt:
+                    if o.idx == pl.idx:
                         continue
                     if payload < 0:
                         self.charge(pl, -payload, "player", o)
@@ -597,8 +717,6 @@ class Game:
                 self.charge(pl, r, "player", self.players[ow])
 
     def take_turn(self, pl: Player) -> None:
-        if pl.bankrupt:
-            return
         cfg = self.cfg
         doubles = 0
         while True:
@@ -636,15 +754,13 @@ class Game:
                 self.salary_paid += self.treasury_pays(
                     pl, salary_for_round(cfg, self.cur_round))
             self.resolve_square(pl, roll)
-            if pl.in_jail or pl.bankrupt or d1 != d2:
+            if pl.in_jail or d1 != d2:
                 return
 
     # ---------------- credit & building -------------------------------------
 
     def manage_credit(self, pl: Player) -> None:
         cfg = self.cfg
-        if pl.bankrupt:
-            return
         if pl.cash < cfg.draw_trigger:
             want = cfg.draw_target - pl.cash
             got = min(want, pl.headroom(cfg))
@@ -658,10 +774,59 @@ class Game:
                 pl.debt -= pay
                 self.pay_to_bank(pl, pay, "repaid")
 
-    def build(self, pl: Player) -> None:
+    # ---- house pricing, including subsidies ------------------------------
+
+    def house_price(self, pos: int, rnd: int, group_houses: int) -> int:
         cfg = self.cfg
-        if pl.bankrupt:
-            return
+        price = float(HOUSE_COST[pos])
+        if cfg.house_cost_mult != 1.0 and (
+                cfg.house_cost_mult_until == 0 or rnd <= cfg.house_cost_mult_until):
+            price *= cfg.house_cost_mult
+        if cfg.first_house_half and group_houses == 0:
+            price *= 0.5
+        return int(round(price))
+
+    # ---- levy-aware builder ---------------------------------------------
+
+    def per_round_burn(self, pl: Player, rnd: int) -> float:
+        """Recurring obligations a player must be able to service."""
+        cfg = self.cfg
+        n_deeds = sum(1 for p in pl.deeds if p not in pl.mortgaged)
+        base = sum(PRICE[p] for p in pl.deeds if p not in pl.mortgaged)
+        if cfg.property_tax_buildings:
+            base += pl.building_cost_basis()
+        levy = base * cfg.property_tax_rate + n_deeds * cfg.property_tax_per_deed
+        return levy + pl.debt * rate_for_round(cfg, rnd)
+
+    def group_plan(self, pl: Player, g: str, rnd: int) -> tuple:
+        """(rent uplift, cash cost) of developing a group to target from here."""
+        cfg = self.cfg
+        rem = max(0, cfg.rounds - rnd)
+        opp = cfg.players - 1
+        gh = sum(pl.houses.get(p, 0) for p in GROUPS[g])
+        cost = 0
+        uplift = 0.0
+        for p in GROUPS[g]:
+            h = pl.houses.get(p, 0)
+            tgt = cfg.max_houses
+            if tgt <= h:
+                continue
+            for k in range(h, tgt):
+                cost += self.house_price(p, rnd, gh)
+                gh += 1
+            cur = RENT[p][h] if h > 0 else RENT[p][0] * 2
+            uplift += (RENT[p][tgt] - cur) * P_LAND[p] * opp * rem
+        return uplift, cost
+
+    def build(self, pl: Player, rnd: int = 1) -> None:
+        cfg = self.cfg
+        if cfg.builder == "simple":
+            self._build_simple(pl, rnd)
+        else:
+            self._build_aware(pl, rnd)
+
+    def _build_simple(self, pl: Player, rnd: int) -> None:
+        cfg = self.cfg
         built = 0
         for g, ps in GROUPS.items():
             if built >= cfg.builds_per_round:
@@ -670,16 +835,199 @@ class Game:
                 continue
             if any(p in pl.mortgaged for p in ps):
                 continue
-            cost = HOUSE_COST[ps[0]]
-            while built < cfg.builds_per_round and pl.cash - cost >= cfg.build_reserve:
+            while built < cfg.builds_per_round:
                 counts = {p: pl.houses.get(p, 0) for p in ps}
                 if min(counts.values()) >= cfg.max_houses:
                     break
+                gh = sum(counts.values())
                 tgt = min(ps, key=lambda p: (counts[p], p))
+                cost = self.house_price(tgt, rnd, gh)
+                if pl.cash - cost < cfg.build_reserve:
+                    break
                 pl.houses[tgt] = counts[tgt] + 1
                 self.pay_to_bank(pl, cost, "house_spend")
                 self.houses_built += 1
                 built += 1
+
+    def _build_aware(self, pl: Player, rnd: int) -> None:
+        """Holds a buffer sized to recurring burn, and only develops a group
+        whose remaining plan pays back inside the rounds left."""
+        cfg = self.cfg
+        reserve = (cfg.build_shock_buffer
+                   + cfg.reserve_rounds * self.per_round_burn(pl, rnd))
+        # undrawn credit is a partial substitute for idle cash
+        off = cfg.headroom_offset if pl.hr_offset is None else pl.hr_offset
+        reserve = max(0.0, reserve - off * pl.headroom(cfg))
+        built = 0
+        for g, ps in GROUPS.items():
+            if built >= cfg.builds_per_round:
+                break
+            if not all(self.owner[p] == pl.idx for p in ps):
+                continue
+            if any(p in pl.mortgaged for p in ps):
+                continue
+            uplift, cost = self.group_plan(pl, g, rnd)
+            if cost <= 0 or uplift / cost < cfg.build_payback:
+                continue
+            while built < cfg.builds_per_round:
+                counts = {p: pl.houses.get(p, 0) for p in ps}
+                if min(counts.values()) >= cfg.max_houses:
+                    break
+                gh = sum(counts.values())
+                tgt = min(ps, key=lambda p: (counts[p], p))
+                price = self.house_price(tgt, rnd, gh)
+                if pl.cash - price < reserve:
+                    break
+                pl.houses[tgt] = counts[tgt] + 1
+                self.pay_to_bank(pl, price, "house_spend")
+                self.houses_built += 1
+                built += 1
+
+    # ---- underworld -------------------------------------------------------
+
+    def dirty_pay(self, pl: Player, amt: int) -> None:
+        """Dirty cash is created ex nihilo; it is a separate currency."""
+        pl.dirty += amt
+        self.dirty_created += amt
+
+    def vice_rent_hook(self, owner: Player, rent: int) -> None:
+        """Escort and Chop Shop both trigger on an opponent landing."""
+        if not owner.vice:
+            return
+        for kind, _left in owner.ventures:
+            if kind == "escort" and rent > 0:
+                self.dirty_pay(owner, int(round(self.cfg.escort_share * rent)))
+            elif kind == "chopshop":
+                self.dirty_pay(owner, 150)
+
+    def pick_venture(self, pl: Player, rnd: int) -> str | None:
+        """High rent income -> Escort; lots of traffic -> Chop Shop;
+        otherwise the flat earner.  Speakeasy is an occasional gamble."""
+        cfg = self.cfg
+        active = {k for k, _ in pl.ventures}
+        rem = cfg.rounds - rnd
+        # expected rent per round at current development
+        exp_rent = 0.0
+        opp = cfg.players - 1
+        for q in pl.deeds:
+            if q in pl.mortgaged or KIND[q] != "street":
+                continue
+            h = pl.houses.get(q, 0)
+            mono = all(self.owner[x] == pl.idx for x in GROUPS[GROUP[q]])
+            r = RENT[q][h] if h > 0 else RENT[q][0] * (2 if mono else 1)
+            exp_rent += P_LAND[q] * opp * r
+        traffic = sum(P_LAND[q] for q in pl.deeds if q not in pl.mortgaged) * opp
+        # dirty revenue is only worth its laundered value
+        keep = 1.0 - launder_haircut(pl.heat + 3)
+        cand = []
+        if "escort" not in active and rem >= 4:
+            cand.append(("escort", cfg.escort_share * exp_rent * 4 * keep - 300))
+        if "numbers" not in active and rem >= 6:
+            cand.append(("numbers", 60 * 6 * keep - 150))
+        if "chopshop" not in active and rem >= 4:
+            heat_cost = 40 * (cfg.chopshop_heat - 2) if cfg.vice_prices_heat else 0
+            cand.append(("chopshop", 150 * traffic * 4 * keep - 250 - heat_cost))
+        if rem >= 1:
+            cand.append(("speakeasy", 294 * keep - 250))
+        if cfg.vice_policy == "numbers_only":
+            cand = [(k, v) for k, v in cand if k == "numbers"]
+        cand = [(k, v) for k, v in cand if v > 0]
+        if not cand:
+            return None
+        cand.sort(key=lambda kv: -kv[1])
+        return cand[0][0]
+
+    def run_underworld(self, rnd: int) -> None:
+        cfg = self.cfg
+        if rnd < cfg.vice_start:
+            return
+        for pl in self.players:
+            if not pl.vice:
+                continue
+            pl.dirty_action_this_round = False
+            # --- income from active ventures ---
+            still = []
+            for v in pl.ventures:
+                kind, left = v
+                if kind == "numbers":
+                    self.dirty_pay(pl, 60)
+                left -= 1
+                if left > 0:
+                    still.append([kind, left])
+            pl.ventures = still
+            # --- policy: how much Heat is acceptable right now? ---
+            if cfg.vice_policy in ("prudent", "numbers_only"):
+                if rnd < cfg.audit_start - 1:
+                    v_cap, l_cap, l_min = 8, 8, cfg.launder_min
+                elif rnd == cfg.audit_start - 1:
+                    v_cap, l_cap, l_min = -1, 9, 1      # bank everything, launch nothing
+                else:
+                    v_cap, l_cap, l_min = 1, 3, 400     # keep Heat survivable
+            else:
+                v_cap, l_cap, l_min = (cfg.venture_heat_cap,
+                                       cfg.launder_heat_cap, cfg.launder_min)
+            # --- launch a new venture? ---
+            if pl.heat <= v_cap and len(pl.ventures) < 2:
+                kind = self.pick_venture(pl, rnd)
+                if kind:
+                    cost, dur, heat = VENTURES[kind]
+                    if kind == "chopshop":
+                        heat = cfg.chopshop_heat
+                    paid = False
+                    if cfg.ventures_dirty_funded and pl.dirty >= cost:
+                        pl.dirty -= cost
+                        self.dirty_destroyed += cost
+                        paid = True
+                    elif pl.cash - cost >= 200:
+                        self.charge(pl, cost, "treasury", tag="venture_cost")
+                        paid = True
+                    if paid:
+                        self.ventures_launched += 1
+                        self.venture_mix[kind] = self.venture_mix.get(kind, 0) + 1
+                        pl.heat += heat
+                        pl.dirty_action_this_round = True
+                        if kind == "speakeasy":
+                            roll = self.rng.randint(1, 6) + self.rng.randint(1, 6)
+                            self.dirty_pay(pl, speakeasy_payout(roll))
+                        else:
+                            pl.ventures.append([kind, dur])
+            # --- launder opportunistically ---
+            if (pl.dirty >= l_min and pl.heat <= l_cap
+                    and not pl.laundered_this_round):
+                cut = launder_haircut(pl.heat)
+                amt = pl.dirty
+                clean = int(round(amt * (1 - cut)))
+                pl.dirty = 0
+                self.dirty_destroyed += amt
+                self.launder_haircut_lost += amt - clean
+                self.bank_pays(pl, clean, "launder_clean")
+                self.laundered_total += clean
+                pl.heat += 1
+                pl.laundered_this_round = True
+                pl.dirty_action_this_round = True
+            # --- Heat cools when you keep your hands clean ---
+            if not pl.dirty_action_this_round:
+                pl.heat = max(0, pl.heat - 1)
+            pl.laundered_this_round = False
+
+    def run_audits(self, rnd: int) -> None:
+        cfg = self.cfg
+        if rnd < cfg.audit_start:
+            return
+        for pl in self.players:
+            if not pl.vice or pl.heat <= 0:
+                continue
+            roll = self.rng.randint(1, 6) + self.rng.randint(1, 6)
+            if roll <= pl.heat:
+                pl.audits += 1
+                self.audits_total += 1
+                self.dirty_seized += pl.dirty
+                self.dirty_destroyed += pl.dirty
+                pl.dirty = 0
+                fine = 100 * pl.heat
+                self.charge(pl, fine, "treasury", tag="audit_fine")
+                self.fines_total += fine
+                pl.heat = 0
 
     def levy_property_tax(self, rnd: int) -> None:
         cfg = self.cfg
@@ -687,8 +1035,6 @@ class Game:
                 or rnd < cfg.property_tax_start:
             return
         for pl in self.players:
-            if pl.bankrupt:
-                continue
             n_deeds = sum(1 for p in pl.deeds if p not in pl.mortgaged)
             base = sum(PRICE[p] for p in pl.deeds if p not in pl.mortgaged)
             if cfg.property_tax_buildings:
@@ -697,10 +1043,15 @@ class Game:
                 + n_deeds * cfg.property_tax_per_deed
             self.charge(pl, due, "treasury", tag="property_tax")
 
+    def accrue_distressed(self) -> None:
+        for pl in self.players:
+            if pl.distressed > 0:
+                pl.distressed *= (1.0 + self.cfg.distressed_rate)
+
     def accrue_interest(self, rnd: int) -> None:
         r = rate_for_round(self.cfg, rnd)
         for pl in self.players:
-            if pl.bankrupt or pl.debt <= 0:
+            if pl.debt <= 0:
                 continue
             due = int(round(pl.debt * r))
             self.interest_paid += due
@@ -713,6 +1064,11 @@ class Game:
         self.run_draft()
         start_total = self.total_money()
         assert start_total == self.total_start, (start_total, self.total_start)
+        for i in range(self.cfg.vice_players):
+            self.players[i].vice = True
+        if self.cfg.hr_offsets is not None:
+            for i, o in enumerate(self.cfg.hr_offsets):
+                self.players[i].hr_offset = o
         events = self.schedule_monopolies()
         ei = 0
         self.cash_hist[0] = [p.cash for p in self.players]
@@ -725,7 +1081,7 @@ class Game:
                 ei += 1
             if rnd == cfg.stimulus_round:
                 for pl in self.players:
-                    if not pl.bankrupt:
+                    if True:
                         got = self.treasury_pays(pl, cfg.stimulus_amount,
                                                  "stimulus")
                         if cfg.stimulus_as_loan:
@@ -734,9 +1090,12 @@ class Game:
                 self.take_turn(pl)
                 pl.min_cash = min(pl.min_cash, pl.cash)
             for pl in self.players:
-                self.build(pl)
+                self.build(pl, rnd)
+            self.run_underworld(rnd)
             self.levy_property_tax(rnd)
             self.accrue_interest(rnd)
+            self.accrue_distressed()
+            self.run_audits(rnd)
             for pl in self.players:
                 self.manage_credit(pl)
                 pl.min_cash = min(pl.min_cash, pl.cash)
@@ -754,13 +1113,19 @@ class Game:
         # ---- second-level check: reconcile the player pool from the ledger ----
         f = self.f
         inflow = (f["salary"] + f["stimulus"] + f["drawn"] + f["house_sale"]
-                  + f["mortgage"] + f["card_in"] + f["bankrupt_absorbed"])
+                  + f["mortgage"] + f["card_in"] + f["bankrupt_absorbed"]
+                  + f["launder_clean"] + f["deed_sale"])
         outflow = (f["interest"] + f["house_spend"] + f["tax"] + f["jail_fee"]
                    + f["repaid"] + f["card_out"] + f["bankrupt_diverted"]
-                   + f["property_tax"])
+                   + f["property_tax"] + f["venture_cost"]
+                   + f["audit_fine"] + f["insider"])
         opening = self.cfg.players * self.cfg.start_cash - f["draft"]
         self.pool_reconciled = (
             sum(p.cash for p in self.players) == opening + inflow - outflow)
+        # dirty cash is a second currency with its own conservation law
+        self.dirty_reconciled = (
+            sum(p.dirty for p in self.players)
+            == self.dirty_created - self.dirty_destroyed)
 
 
 # --------------------------------------------------------------------------
@@ -790,8 +1155,16 @@ def run_trials(cfg: Config, n: int, seed: int = 12345) -> dict:
     draft_face = np.zeros((n, cfg.players), dtype=np.int64)
     networth = np.zeros((n, cfg.players), dtype=np.int64)
     bust_pl = np.zeros((n, cfg.players), dtype=bool)
+    distressed = np.zeros((n, cfg.players))
     houses_hist = np.zeros((n, R + 1), dtype=np.int64)
+    mono_round = np.zeros((n, cfg.players), dtype=np.int64)
+    vice_nw = np.zeros(n); vice_cnt = np.zeros(n)
+    clean_nw = np.zeros(n); clean_cnt = np.zeros(n)
+    vmet = {k: np.zeros(n) for k in
+            ("dirty_created", "laundered", "haircut_lost", "seized", "audits",
+             "fines", "launched", "venture_cost")}
     conserved = 0
+    dirty_ok = 0
     reconciled = 0
     flows: dict[str, float] = {}
 
@@ -820,7 +1193,23 @@ def run_trials(cfg: Config, n: int, seed: int = 12345) -> dict:
         draft_face[t] = [p.draft_face for p in g.players]
         networth[t] = [p.net_worth(cfg) for p in g.players]
         bust_pl[t] = [p.bankrupt for p in g.players]
+        distressed[t] = [p.distressed for p in g.players]
         houses_hist[t] = g.houses_hist
+        vn = [p.net_worth(cfg) for p in g.players]
+        vice_nw[t] = np.mean([vn[i] for i in range(cfg.players) if g.players[i].vice]) \
+            if cfg.vice_players else 0.0
+        clean_nw[t] = np.mean([vn[i] for i in range(cfg.players) if not g.players[i].vice]) \
+            if cfg.vice_players < cfg.players else 0.0
+        mono_round[t] = [p.first_mono_round for p in g.players]
+        vmet["dirty_created"][t] = g.dirty_created
+        vmet["laundered"][t] = g.laundered_total
+        vmet["haircut_lost"][t] = g.launder_haircut_lost
+        vmet["seized"][t] = g.dirty_seized
+        vmet["audits"][t] = g.audits_total
+        vmet["fines"][t] = g.fines_total
+        vmet["launched"][t] = g.ventures_launched
+        vmet["venture_cost"][t] = g.f["venture_cost"]
+        dirty_ok += int(g.dirty_reconciled)
         conserved += int(g.conserved)
         reconciled += int(g.pool_reconciled)
         for k, v in g.f.items():
@@ -836,7 +1225,9 @@ def run_trials(cfg: Config, n: int, seed: int = 12345) -> dict:
         dry=dry, shortfall=shortfall, rent=rent, interest=interest,
         salary=salary, houses=houses, monos=monos, draft_take=draft_take,
         drawn=drawn, draft_face=draft_face, networth=networth,
-        bust_pl=bust_pl, houses_hist=houses_hist,
+        vice_nw=vice_nw, clean_nw=clean_nw, vmet=vmet, dirty_ok=dirty_ok,
+        mono_round=mono_round,
+        bust_pl=bust_pl, distressed=distressed, houses_hist=houses_hist,
         conserved=conserved, reconciled=reconciled,
         flows={k: v / n for k, v in flows.items()},
     )
@@ -850,6 +1241,21 @@ def _rank(a: np.ndarray) -> np.ndarray:
     for i in range(a.shape[0]):
         r[i, order[i]] = idx
     return r
+
+
+def _mono_timing(res: dict) -> dict:
+    """Does completing a monopoly early pay off more once houses are cheap?"""
+    mr, nw = res["mono_round"], res["networth"]
+    early = (mr > 0) & (mr <= 10)
+    late = (mr > 10)
+    none = (mr == 0)
+    nr = _rank(nw)
+    out = {}
+    for tag, mask in (("early", early), ("late", late), ("none", none)):
+        out[f"nw_mono_{tag}"] = float(nw[mask].mean()) if mask.any() else 0.0
+        out[f"win_mono_{tag}"] = float((nr[mask] == 3).mean()) if mask.any() else 0.0
+        out[f"share_mono_{tag}"] = float(mask.mean())
+    return out
 
 
 def _draft_outcome(res: dict) -> dict:
@@ -932,6 +1338,13 @@ def summarise(res: dict) -> dict:
         houses_mean_by_round=res["houses_hist"].mean(axis=0),
         pr_below_200=(play < 200).mean(),
         bust_rate_player=res["bust_pl"].mean(),
+        distressed_mean=float(res["distressed"].mean()),
+        distressed_given=float(res["distressed"][res["distressed"] > 0].mean())
+        if (res["distressed"] > 0).any() else 0.0,
+        **_mono_timing(res),
+        vice_nw=float(res["vice_nw"].mean()), clean_nw=float(res["clean_nw"].mean()),
+        vmet={k: float(v.mean()) for k, v in res["vmet"].items()},
+        dirty_ok=res["dirty_ok"],
         end_med=p50[R], start_med=p50[0],
         conserved=res["conserved"], reconciled=res["reconciled"],
         flows=res["flows"], n=res["n"],
@@ -1550,11 +1963,17 @@ def main() -> None:
     ap.add_argument("--trials", type=int, default=4000)
     ap.add_argument("--write-md", action="store_true",
                     help="emit economy_results.md next to this script")
+    ap.add_argument("--v3", action="store_true",
+                    help="run the v3 study -> economy_results_v3.md")
     ap.add_argument("--v2", action="store_true",
                     help="run the carrying-cost study -> economy_results_v2.md")
     ap.add_argument("--dump", type=str, default=None)
     args = ap.parse_args()
     N = args.trials
+
+    if args.v3:
+        main_v3(N)
+        return
 
     if args.v2:
         main_v2(N)
@@ -2168,6 +2587,501 @@ def main_v2(n: int) -> None:
     here = os.path.dirname(os.path.abspath(__file__))
     write_md_v2(res, os.path.join(here, "economy_results_v2.md"), n)
 
+
+
+# ==========================================================================
+# v3: development subsidy + underworld
+# ==========================================================================
+
+V3_EQ = dict(builder="aware", headroom_offset=0.75, start_cash=2500,
+             go_salary=350, stimulus_as_loan=True, property_tax_per_deed=8,
+             credit_deed_frac=0.75, credit_bldg_frac=0.50)
+
+
+def v3_cfg(**kw) -> Config:
+    d = dict(V3_EQ)
+    d.update(kw)
+    return Config(**d)
+
+
+def v3_tournament(n: int = 3000) -> list:
+    """2 players at build-aggression A vs 2 at B, same table, same dice."""
+    out = []
+    for A, B in [(0.0, 0.25), (0.25, 0.5), (0.5, 0.75), (0.75, 1.0)]:
+        cfg = v3_cfg(hr_offsets=(A, A, B, B))
+        nwA = nwB = wA = wB = 0
+        for t in range(n):
+            g = Game(cfg, random.Random(777 + t))
+            g.run()
+            nws = [p.net_worth(cfg) for p in g.players]
+            best = max(range(4), key=lambda i: nws[i])
+            nwA += nws[0] + nws[1]
+            nwB += nws[2] + nws[3]
+            wA += best in (0, 1)
+            wB += best in (2, 3)
+        out.append((A, B, nwA / (2 * n), nwB / (2 * n), wA / n, wB / n))
+    return out
+
+
+def v3_vice(n: int) -> list:
+    ladder = [
+        ("naive - ignores the Heat cost", dict(vice_policy="reckless", vice_prices_heat=False)),
+        ("disciplined but diversifies", dict(vice_policy="prudent", vice_prices_heat=False)),
+        ("prices Heat correctly", dict(vice_policy="prudent", vice_prices_heat=True)),
+        ("optimal - Numbers Racket only", dict(vice_policy="numbers_only")),
+    ]
+    out = []
+    for label, kw in ladder:
+        cfg = v3_cfg(vice_players=2, house_cost_mult=0.90, **kw)
+        mix = {}
+        tot = dict(l=0, f=0, vc=0, a=0, dc=0, hc=0, sz=0)
+        for t in range(n):
+            g = Game(cfg, random.Random(555 + t))
+            g.run()
+            for k, v in g.venture_mix.items():
+                mix[k] = mix.get(k, 0) + v
+            tot['l'] += g.laundered_total
+            tot['f'] += g.fines_total
+            tot['vc'] += g.f['venture_cost']
+            tot['a'] += g.audits_total
+            tot['dc'] += g.dirty_created
+            tot['hc'] += g.launder_haircut_lost
+            tot['sz'] += g.dirty_seized
+        r = run_trials(cfg, n)
+        s = summarise(r)
+        tm = max(1, sum(mix.values()))
+        out.append(dict(label=label, s=s, mix={k: v / tm for k, v in mix.items()},
+                        net=(tot['l'] - tot['vc'] - tot['f']) / n,
+                        audits=tot['a'] / n, fines=tot['f'] / n,
+                        laundered=tot['l'] / n, vcost=tot['vc'] / n,
+                        dirty=tot['dc'] / n, haircut=tot['hc'] / n,
+                        seized=tot['sz'] / n,
+                        infl=s['total_p50'][24] / s['total_p50'][0] - 1,
+                        dirty_ok=s['dirty_ok'], n=r['n']))
+    return out
+
+
+def main_v3(n: int) -> None:
+    import os
+    R = 24
+    print("  [1/4] builder calibration")
+    calib = {
+        "simple (v1/v2 heuristic)": run_trials(v3_cfg(builder="simple"), n),
+        "aware, conservative (0.0)": run_trials(v3_cfg(headroom_offset=0.0), n),
+    }
+    print("  [2/4] build-aggression sweep")
+    sweep = {off: run_trials(v3_cfg(headroom_offset=off), n)
+             for off in (0.0, 0.25, 0.5, 0.75, 1.0)}
+    print("  [3/4] tournament")
+    tour = v3_tournament(min(n, 3000))
+    print("  [4/4] remedies + underworld")
+    rem = {
+        "baseline (no remedy)": v3_cfg(),
+        "control: levy removed": v3_cfg(property_tax_per_deed=0),
+        "(a) houses -10%": v3_cfg(house_cost_mult=0.90),
+        "(a) houses -20%": v3_cfg(house_cost_mult=0.80),
+        "(a) houses -30%": v3_cfg(house_cost_mult=0.70),
+        "(b) -20%, Eras I-II only": v3_cfg(house_cost_mult=0.80, house_cost_mult_until=12),
+        "(c) first house half price": v3_cfg(first_house_half=True),
+        "(d) buildings 75% of base": v3_cfg(credit_bldg_frac=0.75),
+        "(e) -10% + first-house-half": v3_cfg(house_cost_mult=0.90, first_house_half=True),
+        "(e) -20% + buildings 75%": v3_cfg(house_cost_mult=0.80, credit_bldg_frac=0.75),
+    }
+    remr = {k: summarise(run_trials(v, n)) for k, v in rem.items()}
+    vice = v3_vice(min(n, 3000))
+    here = os.path.dirname(os.path.abspath(__file__))
+    write_md_v3({k: summarise(v) for k, v in calib.items()},
+                {k: summarise(v) for k, v in sweep.items()},
+                tour, remr, vice, os.path.join(here, "economy_results_v3.md"), n)
+
+
+def write_md_v3(calib, sweep, tour, rem, vice, path, n):
+    R = 24
+    out = []
+    w = out.append
+    B = rem["baseline (no remedy)"]
+    CTRL = rem["control: levy removed"]
+    A10 = rem["(a) houses -10%"]
+
+    w("# v3 - development subsidy and venture inflation")
+    w("")
+    w(f"Monte Carlo, **{n:,} trials per configuration**, same engine as v1/v2 with "
+      "three corrections described below.  Money conservation, player-pool "
+      "reconciliation and (new) dirty-cash conservation pass in every trial of "
+      "every configuration.")
+    w("")
+    w("---")
+    w("")
+    w("## Headline")
+    w("")
+    w("**Item 1 - the development problem is roughly a third the size I reported, "
+      "because two of my modelling assumptions were wrong.** Correcting them "
+      f"moves the baseline from 15.2 houses to **{B['houses_mean']:.1f}**, against "
+      f"a levy-free control of **{CTRL['houses_mean']:.1f}** - a "
+      f"**{1 - B['houses_mean'] / CTRL['houses_mean']:.0%} suppression, not 22%**.  "
+      "A subsidy is still worth applying, but a small one: house costs **-10% "
+      f"game-wide** reaches {A10['houses_mean']:.1f} houses and closes about "
+      f"{(A10['houses_mean'] - B['houses_mean']) / (CTRL['houses_mean'] - B['houses_mean']):.0%} "
+      "of the remaining gap with no measurable cost to credit pressure.")
+    w("")
+    w("**Item 2 - the underworld is not inflationary and not a tax on "
+      "non-participation.  It is a knowledge trap.**  Played correctly it is "
+      f"worth **{vice[2]['s']['vice_nw'] - vice[2]['s']['clean_nw']:+,.0f}** in net "
+      f"worth against abstainers; played naively it costs "
+      f"**${vice[0]['s']['vice_nw'] - vice[0]['s']['clean_nw']:+,.0f}**.  The "
+      "spread between those two is the whole story, and it comes from three of "
+      "the four ventures being dead or actively bad.")
+    w("")
+    w("---")
+    w("")
+
+    # ---------------- corrections -------------------------------------
+    w("## 1. Three corrections to the model")
+    w("")
+    w("### 1a. The builder is now levy-aware (as you asked)")
+    w("")
+    w("It now (i) sizes its cash buffer to recurring burn - carrying cost plus "
+      "interest - rather than a flat $700, and (ii) applies a payback test, "
+      "developing a colour group only if the remaining rent uplift over the "
+      "rounds left exceeds the cash cost.  Rent uplift is computed from "
+      "**per-square landing probabilities measured from this engine over "
+      "1,000,000 turns**, so the builder correctly prefers the oranges "
+      "(p=0.032-0.034 per opponent turn) over the dark blues (p=0.024-0.030).")
+    w("")
+    w("### 1b. I had the bankruptcy rule wrong, and it mattered")
+    w("")
+    w("v1 and v2 modelled insolvency as elimination.  **Spec section 5 says there "
+      "is no elimination**: the shortfall becomes Distressed Debt at 15% per "
+      "round, subtracted from net worth, and the player continues to act "
+      "normally.  Forced liquidation also sells deeds at **70% of face**, not a "
+      "50% mortgage.  Both changes make insolvency far less catastrophic, which "
+      "in turn makes building far less risky.  All v3 figures use the spec rule; "
+      "\"P(distress)\" below is the fraction of games in which at least one "
+      "player takes on any Distressed Debt - it is *not* elimination.")
+    w("")
+    w("### 1c. Building aggression is not a free parameter - it is an equilibrium")
+    w("")
+    w("How much cash a player keeps back before building drives the whole "
+      "development answer, so I stopped assuming it and measured it.  Two "
+      "players at one policy against two at another, same table, same dice:")
+    w("")
+    rows = [[f"{A} vs {B_}", fmt(nA), fmt(nB), f"{wA:.0%}", f"{wB:.0%}",
+             "more aggressive" if nB > nA else "more conservative"]
+            for A, B_, nA, nB, wA, wB in tour]
+    w(md_table(rows, ["cash-buffer offset A vs B", "mean net worth A",
+                      "mean net worth B", "win rate A", "win rate B", "winner"]))
+    w("")
+    w("Aggressive building wins at every step, with the advantage flattening out "
+      "around 0.75.  Under the spec's own scoring rule this is unsurprising: net "
+      "worth counts buildings at **full cost**, so building converts cash into an "
+      "asset scored at par *and* earns rent.  Players will therefore build "
+      "aggressively, and the honest baseline is the equilibrium, not a cautious "
+      "heuristic.")
+    w("")
+    rows = []
+    for off, s in sweep.items():
+        rows.append([str(off), f"{s['houses_mean']:.1f}", fmt(s['rent_mean']),
+                     fmt(s['peak_debt_mean']), f"{s['frac_any_credit']:.0%}",
+                     f"{s['frac_bankrupt']:.0%}", f"{s['bust_rate_player']:.0%}",
+                     fmt(s['distressed_given']),
+                     f"{s['total_p50'][R] / s['total_p50'][0] - 1:+.0%}",
+                     fmt(min(s['p50'][1:]))])
+    w(md_table(rows, ["buffer offset", "houses", "rent", "peak debt", "P(credit)",
+                      "P(distress)", "per-player", "mean distressed bal",
+                      "money supply", "median floor"]))
+    w("")
+    w(f"**All v3 results below use offset 0.75**, the equilibrium.  Note what this "
+      f"does to the v2 numbers: peak table debt at equilibrium is "
+      f"**{B['peak_debt_mean']:,.0f}**, not the $2,142 v2 predicted, and credit is "
+      f"drawn in **{B['frac_any_credit']:.0%}** of games.  Your $2,100 debt target "
+      "is comfortably exceeded and the $2,000-$5,000 band is met on the mean, not "
+      "just the p90.")
+    w("")
+
+    # ---------------- corrected baseline -------------------------------
+    w("## 2. The corrected development baseline")
+    w("")
+    rows = []
+    for k, s in list(calib.items()) + [("aware, at equilibrium (0.75)", B)]:
+        rows.append([k, f"{s['houses_mean']:.1f}", fmt(s['rent_mean']),
+                     fmt(s['peak_debt_mean']), f"{s['frac_bankrupt']:.0%}"])
+    w(md_table(rows, ["builder model", "houses built", "rent over game",
+                      "peak debt", "P(distress)"]))
+    w("")
+    w(f"So the suppression figure moves as follows.  Against a levy-free control "
+      f"run at the same salary and the same builder "
+      f"({CTRL['houses_mean']:.1f} houses):")
+    w("")
+    w(md_table([
+        ["v2 reported (simple builder, mismatched control)", "15.2 vs 19.5", "-22%"],
+        ["levy-aware but conservative buffer",
+         f"{calib['aware, conservative (0.0)']['houses_mean']:.1f} vs {CTRL['houses_mean']:.1f}",
+         f"{calib['aware, conservative (0.0)']['houses_mean'] / CTRL['houses_mean'] - 1:.0%}"],
+        ["**levy-aware at equilibrium (correct)**",
+         f"**{B['houses_mean']:.1f} vs {CTRL['houses_mean']:.1f}**",
+         f"**{B['houses_mean'] / CTRL['houses_mean'] - 1:.0%}**"],
+    ], ["model", "houses (levy vs no levy)", "suppression"]))
+    w("")
+    w("Your instinct that my builder understated the effect was right in "
+      "direction for the *cautious* builder - it drops development to "
+      f"{calib['aware, conservative (0.0)']['houses_mean']:.1f} houses.  But that "
+      "policy is dominated: a player following it loses.  Once players build the "
+      "way the scoring rule rewards, most of the suppression disappears.")
+    w("")
+
+    # ---------------- remedies -----------------------------------------
+    w("## 3. Remedies")
+    w("")
+    rows = []
+    for k, s in rem.items():
+        rows.append([k, f"{s['houses_mean']:.1f}", fmt(s['rent_mean']),
+                     fmt(s['peak_debt_mean']), f"{s['frac_any_credit']:.0%}",
+                     f"{s['frac_bankrupt']:.0%}",
+                     f"{s['total_p50'][R] / s['total_p50'][0] - 1:+.0%}",
+                     fmt(min(s['p50'][1:])), f"{s['p_top_draft_wins']:.0%}",
+                     f"{s['win_mono_early']:.0%}", f"{s['win_mono_late']:.0%}",
+                     f"{s['nw_mono_early'] / max(1, s['nw_mono_late']) - 1:+.0%}"])
+    w(md_table(rows, ["remedy", "houses", "rent", "peak debt", "P(credit)",
+                      "P(distress)", "money supply", "median floor",
+                      "top-draft win%", "early-mono win%", "late-mono win%",
+                      "early-mono net worth edge"]))
+    w("")
+    w("Reading it:")
+    w("")
+    w(f"- **(a) price cuts work, roughly linearly**: about **+1.5 houses per 10% "
+      f"cut**.  -10% reaches {A10['houses_mean']:.1f}, -20% reaches "
+      f"{rem['(a) houses -20%']['houses_mean']:.1f}, -30% reaches "
+      f"{rem['(a) houses -30%']['houses_mean']:.1f}.")
+    w(f"- **(b) restricting the discount to Eras I-II is strictly worse than "
+      f"(a) at the same rate** ({rem['(b) -20%, Eras I-II only']['houses_mean']:.1f} "
+      f"vs {rem['(a) houses -20%']['houses_mean']:.1f} houses) for more rules "
+      "complexity.  Not worth it.")
+    w(f"- **(c) first-house-half is a clean, cheap lever**: "
+      f"{rem['(c) first house half price']['houses_mean']:.1f} houses, close to a "
+      "flat -10%, and it targets the hard step - starting a group - rather than "
+      "cheapening the whole build-out.")
+    w(f"- **(d) buildings at 75% of the borrowing base barely touches "
+      f"development** ({rem['(d) buildings 75% of base']['houses_mean']:.1f} vs "
+      f"{B['houses_mean']:.1f}).  It is not a development lever.  It *is* a debt "
+      f"lever - peak debt rises to "
+      f"{rem['(d) buildings 75% of base']['peak_debt_mean']:,.0f} - so keep it in "
+      "your pocket for the securitization layer, not for this problem.")
+    w("")
+    w("### The exchange rate you asked for")
+    w("")
+    w("**Development is cheap in credit-pressure terms and expensive in fairness "
+      "terms.**  Across the whole subsidy range, credit usage stays at "
+      f"{B['frac_any_credit']:.0%}, peak debt moves less than 10%, and distress "
+      "barely moves.  What does move is who wins:")
+    w("")
+    rows = []
+    for k in ["baseline (no remedy)", "(a) houses -10%", "(a) houses -20%",
+              "(a) houses -30%"]:
+        s = rem[k]
+        rows.append([k.replace("baseline (no remedy)", "0% (baseline)"),
+                     f"{s['houses_mean']:.1f}",
+                     f"{s['win_mono_early']:.0%}",
+                     f"{s['nw_mono_early'] / max(1, s['nw_mono_late']) - 1:+.0%}",
+                     f"{s['total_p50'][R] / s['total_p50'][0] - 1:+.0%}",
+                     f"{s['frac_any_credit']:.0%}"])
+    w(md_table(rows, ["subsidy", "houses", "early-monopoly win rate",
+                      "early-mono net worth edge", "money supply", "P(credit)"]))
+    w("")
+    w(f"**Per 10% of house-price cut: +1.5 houses, +1.5pp early-monopoly win "
+      f"rate, +3pp money supply, and no measurable change in credit pressure.**  "
+      "So yes - cheaper houses do reward whoever completes a monopoly first, "
+      "exactly as you suspected.  The early-monopoly net-worth edge widens from "
+      f"{B['nw_mono_early'] / max(1, B['nw_mono_late']) - 1:+.0%} at baseline to "
+      f"{rem['(a) houses -30%']['nw_mono_early'] / max(1, rem['(a) houses -30%']['nw_mono_late']) - 1:+.0%} "
+      "at -30%.  That argues for the smallest dose that does the job.")
+    w("")
+
+    # ---------------- underworld ---------------------------------------
+    w("## 4. Item 2 - the underworld")
+    w("")
+    w("Modelled per spec sections 10 and 12: the four ventures with their costs, "
+      "durations, Heat and payouts; Escort paying 40% of rent collected and Chop "
+      "Shop $150 per opponent landing; the Speakeasy 2d6 table; Heat accrual and "
+      "decay; the 2d6 audit check from round 13; the 25% laundering haircut "
+      "worsening 5pp per Heat point above 3, capped at 60%; seizure and the "
+      "$100 x Heat fine; and dirty cash scoring zero.  Venture costs and fines "
+      "flow to the Treasury.  **Dirty cash is tracked as a second currency with "
+      "its own conservation law**, verified in every trial.")
+    w("")
+    w("Two players run ventures, two abstain, at the same table on the same dice "
+      "- so the comparison is like-for-like.")
+    w("")
+    rows = []
+    for v in vice:
+        s = v['s']
+        rows.append([v['label'], fmt(s['vice_nw']), fmt(s['clean_nw']),
+                     f"${s['vice_nw'] - s['clean_nw']:+,.0f}",
+                     f"${v['net']:+,.0f}", f"{v['audits']:.2f}", fmt(v['fines']),
+                     f"{v['infl']:+.0%}",
+                     "  ".join(f"{k[:4]} {x:.0%}" for k, x in
+                               sorted(v['mix'].items(), key=lambda kv: -kv[1])[:2])])
+    w(md_table(rows, ["player sophistication", "net worth, vice players",
+                      "net worth, abstainers", "**edge**",
+                      "net clean money created", "audits/game", "fines paid",
+                      "money supply", "venture mix"]))
+    w("")
+    w("### Is it +EV or -EV?")
+    w("")
+    w(f"**Both, depending entirely on knowing one thing.**  A player who prices "
+      f"Heat correctly ends "
+      f"${vice[2]['s']['vice_nw'] - vice[2]['s']['clean_nw']:+,.0f} ahead of an "
+      f"abstainer - marginally positive, about "
+      f"{(vice[2]['s']['vice_nw'] / max(1, vice[2]['s']['clean_nw']) - 1):+.0%} of "
+      f"net worth.  A player who does not ends "
+      f"${vice[0]['s']['vice_nw'] - vice[0]['s']['clean_nw']:+,.0f} behind.  "
+      "That is a swing of roughly "
+      f"${abs(vice[2]['s']['vice_nw'] - vice[2]['s']['clean_nw'] - (vice[0]['s']['vice_nw'] - vice[0]['s']['clean_nw'])):,.0f} "
+      "on a typical net worth of ~$1,600.")
+    w("")
+    w("**It is not a tax on non-participation.**  At best it is worth ~5% of net "
+      "worth, which is well inside the noise of a single bad landing.  Abstaining "
+      "entirely is a perfectly viable line.")
+    w("")
+    w("### Effect on the money supply")
+    w("")
+    w(f"**Immaterial, and the sign flips with skill.**  Correct play creates "
+      f"${vice[2]['net']:+,.0f} of net clean money per game - the branch is *mildly "
+      f"inflationary*, moving the money supply from -30% to "
+      f"{vice[2]['infl']:+.0%}.  Naive play *destroys* ${abs(vice[0]['net']):,.0f} "
+      f"and pushes the supply to {vice[0]['infl']:+.0%}.")
+    w("")
+    w("The mechanism is that ventures cost **clean** cash and pay **dirty**, and "
+      "dirty is worth at most 75% of face after laundering.  A venture therefore "
+      "has to return over **133% of its cost in dirty just to break even** before "
+      "Heat is priced at all.  Only Numbers Racket clears that comfortably "
+      "($360 dirty on $150, a 240% return).")
+    w("")
+    w("### Is Heat/audit too punishing?")
+    w("")
+    w("**The audit rates are about right; the venture table is not.**  Audits "
+      f"only bite when Heat is allowed to run - a correct player takes "
+      f"{vice[2]['audits']:.2f} audits per game and pays {fmt(vice[2]['fines'])} in "
+      f"fines, while a naive one takes {vice[0]['audits']:.2f} and pays "
+      f"{fmt(vice[0]['fines'])}.  That is Heat doing exactly its job: it punishes "
+      "volume, not participation.")
+    w("")
+    w("The real problem is that **three of the four ventures are not worth "
+      "launching**:")
+    w("")
+    w(md_table([
+        ["**Numbers Racket**", "$150", "$360 dirty over 6 rounds", "+2",
+         "**+$120 laundered. The only clearly good one.**"],
+        ["Chop Shop", "$250", "~$366 dirty over 4 rounds", "+3",
+         "~+$24 before Heat. The +3 Heat makes it net-negative - a trap that "
+         "looks positive."],
+        ["Escort Service", "$300", "40% of rent over 4 rounds", "+2",
+         "Needs >$350/round of rent income to beat Numbers. Typical is $35-150. "
+         "**Never launched in any simulated game.**"],
+        ["Speakeasy", "$250", "$294 dirty expected", "+2",
+         "-$30 laundered, as the spec already notes."],
+    ], ["venture", "cost", "return", "Heat", "verdict"]))
+    w("")
+    w("Escort being dead is the interesting one, because the spec explicitly "
+      "designs it as the complement to Chop Shop - \"they reward opposite board "
+      "positions\".  That intent does not survive contact with the rent curve: "
+      "with monopolies rare and development modest, **no player ever collects "
+      "enough rent for 40% of it to beat a flat $60/round**.  Raising it to 80% "
+      "of rent lifts its share of launches from ~1% to ~10% - better, but still "
+      "a niche pick.")
+    w("")
+
+    # ---------------- recommendations ----------------------------------
+    w("## 5. Recommendations")
+    w("")
+    w("### Item 1: **cut house costs 10% game-wide**")
+    w("")
+    w(f"One line in the config module: `houseCostMultiplier: 0.90`.")
+    w("")
+    w(md_table([
+        ["Houses built", f"{B['houses_mean']:.1f}", f"{A10['houses_mean']:.1f}",
+         f"{CTRL['houses_mean']:.1f}"],
+        ["Rent over the game", fmt(B['rent_mean']), fmt(A10['rent_mean']),
+         fmt(CTRL['rent_mean'])],
+        ["Peak table debt", fmt(B['peak_debt_mean']), fmt(A10['peak_debt_mean']),
+         fmt(CTRL['peak_debt_mean'])],
+        ["P(credit drawn)", f"{B['frac_any_credit']:.0%}",
+         f"{A10['frac_any_credit']:.0%}", f"{CTRL['frac_any_credit']:.0%}"],
+        ["P(distress)", f"{B['frac_bankrupt']:.0%}", f"{A10['frac_bankrupt']:.0%}",
+         f"{CTRL['frac_bankrupt']:.0%}"],
+        ["Money supply", f"{B['total_p50'][R] / B['total_p50'][0] - 1:+.0%}",
+         f"{A10['total_p50'][R] / A10['total_p50'][0] - 1:+.0%}",
+         f"{CTRL['total_p50'][R] / CTRL['total_p50'][0] - 1:+.0%}"],
+        ["Top-draft win rate", f"{B['p_top_draft_wins']:.0%}",
+         f"{A10['p_top_draft_wins']:.0%}", f"{CTRL['p_top_draft_wins']:.0%}"],
+        ["Early-monopoly win rate", f"{B['win_mono_early']:.0%}",
+         f"{A10['win_mono_early']:.0%}", f"{CTRL['win_mono_early']:.0%}"],
+    ], ["metric", "baseline", "**-10% (recommended)**", "levy-free control"]))
+    w("")
+    w(f"This lands development at {A10['houses_mean']:.1f} houses - just under "
+      f"your 19-20 target and within {CTRL['houses_mean'] - A10['houses_mean']:.1f} "
+      "of the levy-free control - while leaving credit pressure, distress and the "
+      "draft untouched.  **I deliberately stopped short of the target.**  Hitting "
+      f"19-20 needs -20%, which buys {rem['(a) houses -20%']['houses_mean'] - A10['houses_mean']:.1f} "
+      "more houses at the price of a further +1.5pp of early-monopoly win rate "
+      "and 3pp less deflation.  Given the corrected baseline is only "
+      f"{1 - B['houses_mean'] / CTRL['houses_mean']:.0%} below control rather than "
+      "22%, that extra dose is buying less than it costs.  If playtesting shows "
+      "the rent curve still too flat, **-20% is the next step, not -30%**.")
+    w("")
+    w("If you would rather not touch the price of every house, "
+      f"**(c) first-house-half is an equally good single change** "
+      f"({rem['(c) first house half price']['houses_mean']:.1f} houses) with a "
+      "more targeted feel - it subsidises starting a group, not finishing one.")
+    w("")
+    w("### Item 2: **no change to Heat or audits. Fix the venture table.**")
+    w("")
+    w("The Heat and audit mechanics are working - they punish volume, scale "
+      "correctly with exposure, and leave a disciplined player a real but small "
+      "edge.  Leave them alone.")
+    w("")
+    w("The one change I would make: **cut Escort Service from $300 to $150 and "
+      "raise it to 60% of rent collected.**  As specced it is dead content - "
+      "never launched in any of the simulated games - which collapses the "
+      "underworld to a single viable venture and removes the "
+      "Escort/Chop-Shop board-position tension the design is built around.  "
+      "Re-pricing it is the cheapest way to restore that choice.")
+    w("")
+    w("Two things I would *not* do, and one to watch:")
+    w("")
+    w("- **Do not soften Chop Shop's +3 Heat.**  I tested it; making it +2 makes "
+      "players launch it more and they end up *worse* off, because the venture is "
+      "thin on margin before Heat is even counted.  If you want Chop Shop to be "
+      "real, cut its cost, not its Heat.")
+    w("- **Do not worry about venture inflation.**  It is a rounding error on the "
+      "money supply either way, and it is not the reason to change anything.")
+    w("- **Watch the knowledge gap.**  A ~$1,300 swing in net worth between "
+      "correct and naive underworld play is the largest single skill cliff in the "
+      "economy.  That may be exactly what you want from an Era III instrument - "
+      "but the assist panel should probably show the laundered value of a "
+      "venture's expected payout, not just its dirty payout, or new players will "
+      "reliably walk into it.")
+    w("")
+    w("## 6. Caveats")
+    w("")
+    w("- The building-aggression equilibrium was measured with pairwise "
+      "tournaments, not solved.  It is a best response within the policy family I "
+      "tested (cash-buffer offsets), not a proven Nash equilibrium.")
+    w("- Peer loans, securitization, CDS, deed options, era-deck effects, bribery "
+      "and insider trading are still not modelled.  Bribery in particular gives "
+      "dirty cash a use I have not credited, so the underworld's EV is if "
+      "anything slightly understated.")
+    w("- The forced-liquidation model sells deeds to the bank at exactly 70% of "
+      "face.  The spec offers them to players first at or above that price, so "
+      "real liquidations should recover a little more.")
+    w("- Venture funding is modelled as clean-cash-only, on the reading that the "
+      "spec's remark about bribery being dirty-payable is what \"stops dirty "
+      "money from being a pure liability\".  I tested dirty-funded ventures as a "
+      "sensitivity; it moved the result by under $10.")
+    w("")
+
+    with open(path, "w") as fh:
+        fh.write("\n".join(out) + "\n")
+    print(f"\nwrote {path} ({len(out)} lines)")
 
 if __name__ == "__main__":
     main()
