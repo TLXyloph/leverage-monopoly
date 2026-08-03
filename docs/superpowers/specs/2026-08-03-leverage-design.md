@@ -86,6 +86,29 @@ Fixed for the whole game, determined by a single die roll at setup. Because no
 property is acquired by landing, turn order carries far less advantage than in
 standard Monopoly — it affects only the order of movement within a round.
 
+### Standard rules retained
+
+Everything below is unchanged from standard Monopoly and is stated explicitly because
+the engine must implement it and the landing-probability model depends on some of it.
+
+- **Rent tables** are standard, including the full-colour-group doubling on undeveloped
+  sets, railroads at $25/$50/$100/$200 for one through four owned, and utilities at 4x
+  or 10x the dice roll for one or two owned.
+- **Building** requires ownership of the full unmortgaged colour group and follows the
+  even-build rule. House and hotel costs are standard.
+- **House and hotel supply is limited** to 32 houses and 12 hotels. The housing shortage
+  is a legitimate and deliberate strategy.
+- **Mortgages** pay 50% of face value; unmortgaging costs 55%. A mortgaged property
+  collects no rent and contributes nothing to the borrowing base.
+- **GO** pays $200 on passing or landing, from the Treasury.
+- **Income Tax** (square 4) is a flat $200 and **Luxury Tax** (square 38) is $100, both
+  paid to the Treasury. The percentage option on Income Tax is not offered.
+- **Free Parking** (square 20) does nothing. No accumulated-pot house rule.
+- **Jail:** a player sent to Jail leaves on their next turn by paying $50. This is the
+  convention the landing-probability model assumes, and it is mandatory rather than
+  optional so that the model stays exact. Rolling for doubles to escape is not offered.
+- **Three consecutive doubles** sends the player to Jail without moving.
+
 ---
 
 ## 3. The draft
@@ -112,8 +135,14 @@ Each draft round, every player privately submits:
    acquiring at face value if available.
 4. Two cascading players landing on the same property resolve by **lower total face
    value acquired so far** — a quiet self-balancing rule requiring no extra bid round.
-5. If a player's remaining budget cannot cover the face value of any remaining
+5. If all three of a player's ranked choices become unavailable — taken by others or
+   lost in contests — they acquire the **cheapest remaining property** at face value.
+6. If a player's remaining budget cannot cover the face value of any remaining
    property, they skip that round and receive **$150** in compensation.
+
+Submissions are validated at entry: a player may not nominate a property already
+allocated in an earlier round, and their maximum bid may never exceed their remaining
+budget.
 
 After each round, all allocations are revealed to everyone. Information from rounds
 1–6 is what makes round 7 skillful.
@@ -204,7 +233,9 @@ A contract transferring all rent collected on **one specified property** over a
 ### Rules
 
 - Only the property's owner may originate a contract.
-- Windows are at most **8 rounds** and must begin at the round after origination or later.
+- Windows are at most **8 rounds**, must begin at the round after origination or later,
+  and must end at or before round 24.
+- A **mortgaged property cannot originate** a contract, since it collects no rent.
 - **One active contract per property.** A property with an outstanding future cannot
   have another originated against it.
 - Price is negotiated freely between the two players.
@@ -336,6 +367,12 @@ A CDS references either a **peer loan note** or a **CDO tranche**.
 **Credit events:** for a loan note, borrower default. For a tranche, receiving less
 than its full face by pool termination — so tranche CDS settle at termination.
 
+**All pools terminate at the end of round 24** for scoring, whether or not their
+underlying assets have run their course. Any tranche short of its face at that moment
+triggers its referencing CDS. This makes the final round genuinely dangerous for anyone
+who wrote protection, and it removes any ambiguity about unresolved positions at
+scoring.
+
 ---
 
 ## 9. Deed options
@@ -420,9 +457,15 @@ it is most dangerous.
 
 ### Bribery and insider trading
 
-**Bribery** costs $200, **payable in dirty cash**, once per round per player. It forces
-a re-roll of any die roll, waives one card effect, or delays a margin call by one
-round. +1 Heat.
+**Bribery** costs $200, **payable in dirty cash**, once per round per player, and does
+exactly one of three things:
+
+- Forces a re-roll of any single die roll, including another player's movement
+- Cancels an era card effect drawn this round that targets the briber specifically
+- Delays one of the briber's own margin calls by one round
+
+It cannot cancel a card that targets all players, and it cannot be used during
+Settlement after an audit has already resolved. +1 Heat.
 
 **Insider trading** costs $100 in clean or dirty cash and reveals the top card of the
 current era deck to the buyer only. +1 Heat.
@@ -469,10 +512,20 @@ NET WORTH =   clean cash
             + dirty cash x 0
 ```
 
-**Marking instruments to model:** rent futures held are marked at remaining expected
-value; CDO tranches at expected remaining cashflow through the waterfall; loan notes
-held at outstanding principal discounted by a haircut derived from borrower leverage;
-deed options at `max(0, current deed value − strike)`; untriggered CDS at zero.
+**Marking instruments to model**, all computed by the engine:
+
+| Instrument | Mark |
+|---|---|
+| Rent future held | Remaining expected value from the Markov model |
+| CDO tranche held | Expected remaining cashflow through the waterfall |
+| Loan note held | `principal x (1 − 0.15 x min(borrowerLeverage, 4))` |
+| Deed option held | `max(0, deed face value − strike)` |
+| CDS bought, untriggered | Zero |
+| CDS written, untriggered | Zero; the 30% collateral reduces borrowing base, not net worth |
+
+`borrowerLeverage` is the borrower's drawn credit balance divided by their borrowing
+base, so a note against an unlevered player marks at par and a note against a player at
+4x or worse marks at 40% of principal.
 
 **Default win condition:** highest net worth after round 24.
 
