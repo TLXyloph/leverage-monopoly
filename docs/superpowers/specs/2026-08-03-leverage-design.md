@@ -91,9 +91,13 @@ standard Monopoly — it affects only the order of movement within a round.
 Everything below is unchanged from standard Monopoly and is stated explicitly because
 the engine must implement it and the landing-probability model depends on some of it.
 
-- **Rent tables** are standard, including the full-colour-group doubling on undeveloped
-  sets, railroads at $25/$50/$100/$200 for one through four owned, and utilities at 4x
-  or 10x the dice roll for one or two owned.
+- **Rent tables** are standard. Where a player owns every deed in a colour group,
+  rent on each **individually undeveloped** deed in that group is doubled — the standard
+  per-square rule, not a whole-set test, so a group with houses on one deed still pays
+  doubled rent on its undeveloped siblings. Railroads pay $25/$50/$100/$200 for one
+  through four owned; utilities pay 4x or 10x the dice roll for one or two owned.
+  Mortgaged deeds count toward neither the group-ownership test nor the railroad and
+  utility owned-counts.
 - **Building** requires ownership of the full unmortgaged colour group and follows the
   even-build rule. **House and hotel costs are 90% of standard**, to offset the
   development suppression caused by the carrying cost. Buildings sell back to the bank

@@ -43,9 +43,9 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
   BOARD_SIZE, CARD_SQUARES, DEEDS, DEED_IDS, DEED_LIST, DOUBLES_ROLL_MULTIPLIER,
-  GO_SQUARE, GO_TO_JAIL_SQUARE, GROUP_MEMBERS, INCOME_TAX_SQUARE, JAIL_SQUARE,
-  LUXURY_TAX_SQUARE, RAILROAD_RENT, SQUARES, UTILITY_MULTIPLIER,
-  deedAt, deedById, totalFaceValue,
+  FREE_PARKING_SQUARE, GO_SQUARE, GO_TO_JAIL_SQUARE, GROUP_MEMBERS,
+  INCOME_TAX_SQUARE, JAIL_SQUARE, LUXURY_TAX_SQUARE, RAILROAD_RENT, SQUARES,
+  UTILITY_MULTIPLIER, deedAt, deedById, totalFaceValue,
 } from './board.js'
 import type { ColorGroup } from '../core/types.js'
 
@@ -80,7 +80,8 @@ describe('board layout', () => {
     expect(GO_SQUARE).toBe(0)
     expect(INCOME_TAX_SQUARE).toBe(4)
     expect(JAIL_SQUARE).toBe(10)
-    expect(FREE_PARKING_SQUARE_INDEX()).toBe(20)
+    expect(FREE_PARKING_SQUARE).toBe(20)
+    expect(SQUARES[FREE_PARKING_SQUARE]?.kind).toBe('free-parking')
     expect(GO_TO_JAIL_SQUARE).toBe(30)
     expect(LUXURY_TAX_SQUARE).toBe(38)
     expect(SQUARES[GO_SQUARE]?.kind).toBe('go')
@@ -167,10 +168,6 @@ describe('deeds', () => {
     expect(DOUBLES_ROLL_MULTIPLIER).toBe(1.19)
   })
 })
-
-function FREE_PARKING_SQUARE_INDEX(): number {
-  return SQUARES.findIndex((s) => s.kind === 'free-parking')
-}
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -2113,3 +2110,768 @@ Monopoly landing tables do not apply and are not used."
 ```
 
 ---
+
+### Task 8: `draft` context — ranked-triple submission and collision resolution
+
+Seven simultaneous rounds; every player ends with exactly seven deeds. Spec
+section 3 defines six resolution rules and they are implemented literally.
+The context splits into `selectors.ts`, `reduce.ts`, `decide.ts` and
+`resolve.ts` (the collision algorithm) so no file approaches 500 lines; only
+`index.ts` is importable from outside.
+
+**Files:**
+- Create: `packages/engine/src/contexts/draft/selectors.ts`
+- Create: `packages/engine/src/contexts/draft/resolve.ts`
+- Create: `packages/engine/src/contexts/draft/reduce.ts`
+- Create: `packages/engine/src/contexts/draft/decide.ts`
+- Create: `packages/engine/src/contexts/draft/index.ts`
+- Modify: `packages/engine/src/core/reduce.ts`
+- Modify: `packages/engine/src/index.ts`
+- Test: `packages/engine/src/contexts/draft/draft.test.ts`
+
+**Interfaces:**
+- Consumes: `DEED_IDS`, `DEEDS` from `config/board.js`; `GameState`, `DraftState`, `DraftSubmission` from `core/state.js`; `GameEvent` from `core/events.js`; `DeedId`, `Money`, `PlayerId`, `PLAYER_IDS` from `core/types.js`; `reject`, `Rejection` from `core/errors.js`.
+- Produces:
+  - `const DRAFT_ROUNDS: number` (28 deeds / 4 players = 7)
+  - `function availableDeeds(state: GameState): readonly DeedId[]` (cheapest first, square index breaks ties)
+  - `function cheapestAvailable(state: GameState): DeedId | null`
+  - `function faceValueAcquired(state: GameState, player: PlayerId): Money`
+  - `function deedCount(state: GameState, player: PlayerId): number`
+  - `function hasSubmitted(state: GameState, player: PlayerId): boolean`
+  - `function turnIndex(state: GameState, player: PlayerId): number`
+  - `function resolveDraftRound(state: GameState): readonly GameEvent[]`
+  - `function reduceDraft(state: GameState, event: GameEvent): GameState`
+  - `type DraftCommand = { kind: 'submit-draft'; player; ranked: readonly [DeedId, DeedId, DeedId]; maxBid: Money } | { kind: 'resolve-draft-round' }`
+  - `function decideDraft(state: GameState, command: DraftCommand): readonly GameEvent[] | Rejection`
+
+- [ ] **Step 1: Write the failing test for submission validation and rules 1-2**
+
+`packages/engine/src/contexts/draft/draft.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { DRAFT_ROUNDS, availableDeeds, decideDraft, deedCount } from './index.js'
+import { initialState } from '../session/index.js'
+import { reduce } from '../../core/reduce.js'
+import { isRejection } from '../../core/errors.js'
+import { ECONOMY } from '../../config/economy.js'
+import { DEEDS, DEED_IDS } from '../../config/board.js'
+import type { GameConfig, GameState } from '../../core/state.js'
+import type { GameEvent } from '../../core/events.js'
+import type { DeedId, Money, PlayerId } from '../../core/types.js'
+
+const CONFIG: GameConfig = {
+  turnOrder: ['P1', 'P2', 'P3', 'P4'],
+  unlockMode: 'progressive',
+  winCondition: { kind: 'fixed-rounds' },
+}
+
+function draftState(): GameState {
+  const base = initialState(CONFIG)
+  return { ...base, phase: 'draft', draft: { round: 1, submissions: [], complete: false } }
+}
+
+function face(deed: DeedId): Money {
+  return DEEDS[deed]?.faceValue ?? 0
+}
+
+function submit(
+  state: GameState,
+  player: PlayerId,
+  ranked: readonly [DeedId, DeedId, DeedId],
+  maxBid: Money = face(ranked[0]),
+): GameState {
+  const result = decideDraft(state, { kind: 'submit-draft', player, ranked, maxBid })
+  if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
+  return result.reduce(reduce, state)
+}
+
+function resolve(state: GameState): readonly GameEvent[] {
+  const result = decideDraft(state, { kind: 'resolve-draft-round' })
+  if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
+  return result
+}
+
+function awards(events: readonly GameEvent[]): Record<string, { deed: DeedId; price: Money }> {
+  const out: Record<string, { deed: DeedId; price: Money }> = {}
+  for (const event of events) {
+    if (event.type === 'DraftDeedAwarded') out[event.player] = { deed: event.deed, price: event.price }
+  }
+  return out
+}
+
+describe('submission validation', () => {
+  it('accepts a well-formed ranked triple', () => {
+    const state = submit(draftState(), 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
+    expect(state.draft?.submissions).toHaveLength(1)
+  })
+
+  it('rejects a bid below the first choice face value', () => {
+    const result = decideDraft(draftState(), {
+      kind: 'submit-draft', player: 'P1',
+      ranked: ['boardwalk', 'park-place', 'short-line'], maxBid: 399,
+    })
+    expect(isRejection(result) && result.code).toBe('BID_BELOW_FACE')
+  })
+
+  it('rejects a bid above the remaining budget', () => {
+    const result = decideDraft(draftState(), {
+      kind: 'submit-draft', player: 'P1',
+      ranked: ['boardwalk', 'park-place', 'short-line'],
+      maxBid: ECONOMY.STARTING_CASH + 1,
+    })
+    expect(isRejection(result) && result.code).toBe('BID_EXCEEDS_BUDGET')
+  })
+
+  it('rejects a deed already allocated in an earlier round', () => {
+    const base = draftState()
+    const taken: GameState = {
+      ...base,
+      deeds: { ...base.deeds, boardwalk: { ...base.deeds.boardwalk, owner: 'P4' } },
+    }
+    const result = decideDraft(taken, {
+      kind: 'submit-draft', player: 'P1',
+      ranked: ['boardwalk', 'park-place', 'short-line'], maxBid: 400,
+    })
+    expect(isRejection(result) && result.code).toBe('DEED_UNAVAILABLE')
+  })
+
+  it('rejects a duplicated deed inside the triple', () => {
+    const result = decideDraft(draftState(), {
+      kind: 'submit-draft', player: 'P1',
+      ranked: ['boardwalk', 'boardwalk', 'short-line'], maxBid: 400,
+    })
+    expect(isRejection(result) && result.code).toBe('DEED_UNAVAILABLE')
+  })
+
+  it('rejects a second submission in the same round', () => {
+    const state = submit(draftState(), 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
+    const result = decideDraft(state, {
+      kind: 'submit-draft', player: 'P1',
+      ranked: ['illinois-avenue', 'park-place', 'short-line'], maxBid: 240,
+    })
+    expect(isRejection(result) && result.code).toBe('ALREADY_SUBMITTED')
+  })
+
+  it('refuses to resolve before all four have submitted', () => {
+    const state = submit(draftState(), 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
+    const result = decideDraft(state, { kind: 'resolve-draft-round' })
+    expect(isRejection(result)).toBe(true)
+  })
+})
+
+describe('rules 1 and 2 — uncontested and contested first choices', () => {
+  it('awards an uncontested first choice at face value', () => {
+    let state = draftState()
+    state = submit(state, 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
+    state = submit(state, 'P2', ['illinois-avenue', 'park-place', 'short-line'], 240)
+    state = submit(state, 'P3', ['reading-railroad', 'park-place', 'short-line'], 200)
+    state = submit(state, 'P4', ['marvin-gardens', 'park-place', 'short-line'], 280)
+    const result = awards(resolve(state))
+    expect(result['P1']).toEqual({ deed: 'boardwalk', price: 400 })
+    expect(result['P2']).toEqual({ deed: 'illinois-avenue', price: 240 })
+    expect(result['P3']).toEqual({ deed: 'reading-railroad', price: 200 })
+    expect(result['P4']).toEqual({ deed: 'marvin-gardens', price: 280 })
+  })
+
+  it('gives a contested deed to the highest bid, who pays their own bid', () => {
+    let state = draftState()
+    state = submit(state, 'P1', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    state = submit(state, 'P2', ['reading-railroad', 'illinois-avenue', 'short-line'], 290)
+    state = submit(state, 'P3', ['marvin-gardens', 'park-place', 'short-line'], 280)
+    state = submit(state, 'P4', ['pacific-avenue', 'park-place', 'short-line'], 300)
+    const events = resolve(state)
+    expect(events).toContainEqual({
+      type: 'DraftDeedAwarded', player: 'P1', deed: 'reading-railroad',
+      price: 340, contested: true,
+    })
+    expect(awards(events)['P2']).toEqual({ deed: 'illinois-avenue', price: 240 })
+  })
+
+  it('breaks a bid tie on lower total face value acquired, then turn order', () => {
+    const base = draftState()
+    const seeded: GameState = {
+      ...base,
+      deeds: { ...base.deeds, boardwalk: { ...base.deeds.boardwalk, owner: 'P1' } },
+    }
+    let state = seeded
+    state = submit(state, 'P1', ['reading-railroad', 'pacific-avenue', 'short-line'], 200)
+    state = submit(state, 'P2', ['reading-railroad', 'marvin-gardens', 'short-line'], 200)
+    state = submit(state, 'P3', ['illinois-avenue', 'park-place', 'short-line'], 240)
+    state = submit(state, 'P4', ['virginia-avenue', 'park-place', 'short-line'], 160)
+    // P1 already holds $400 of face value, so P2 takes the tie.
+    expect(awards(resolve(state))['P2']?.deed).toBe('reading-railroad')
+
+    let even = draftState()
+    even = submit(even, 'P1', ['reading-railroad', 'pacific-avenue', 'short-line'], 200)
+    even = submit(even, 'P2', ['reading-railroad', 'marvin-gardens', 'short-line'], 200)
+    even = submit(even, 'P3', ['illinois-avenue', 'park-place', 'short-line'], 240)
+    even = submit(even, 'P4', ['virginia-avenue', 'park-place', 'short-line'], 160)
+    // Nothing acquired yet, so the earlier player in turn order wins.
+    expect(awards(resolve(even))['P1']?.deed).toBe('reading-railroad')
+  })
+})
+
+describe('rules 3, 4, 5 and 6 — cascades and the guarantees', () => {
+  it('cascades a loser to their second choice at face value', () => {
+    let state = draftState()
+    state = submit(state, 'P1', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    state = submit(state, 'P2', ['reading-railroad', 'park-place', 'short-line'], 290)
+    state = submit(state, 'P3', ['illinois-avenue', 'marvin-gardens', 'short-line'], 240)
+    state = submit(state, 'P4', ['pacific-avenue', 'marvin-gardens', 'short-line'], 300)
+    expect(awards(resolve(state))['P2']).toEqual({ deed: 'park-place', price: 350 })
+  })
+
+  it('resolves two cascaders on one deed by lower total face acquired (rule 4)', () => {
+    const base = draftState()
+    const seeded: GameState = {
+      ...base,
+      deeds: {
+        ...base.deeds,
+        boardwalk: { ...base.deeds.boardwalk, owner: 'P2' },
+        'baltic-avenue': { ...base.deeds['baltic-avenue'], owner: 'P3' },
+      },
+    }
+    let state = seeded
+    state = submit(state, 'P1', ['illinois-avenue', 'pacific-avenue', 'short-line'], 300)
+    state = submit(state, 'P2', ['illinois-avenue', 'park-place', 'short-line'], 240)
+    state = submit(state, 'P3', ['illinois-avenue', 'park-place', 'virginia-avenue'], 240)
+    state = submit(state, 'P4', ['marvin-gardens', 'ventnor-avenue', 'states-avenue'], 280)
+    const result = awards(resolve(state))
+    expect(result['P1']).toEqual({ deed: 'illinois-avenue', price: 300 })
+    // P2 holds $400 of face, P3 holds $60, so P3 takes Park Place.
+    expect(result['P3']).toEqual({ deed: 'park-place', price: 350 })
+    expect(result['P2']).toEqual({ deed: 'short-line', price: 200 })
+  })
+
+  it('falls back to the cheapest remaining deed when all three choices are gone (rule 5)', () => {
+    let state = draftState()
+    state = submit(state, 'P1', ['boardwalk', 'park-place', 'illinois-avenue'], 500)
+    state = submit(state, 'P2', ['park-place', 'boardwalk', 'illinois-avenue'], 400)
+    state = submit(state, 'P3', ['illinois-avenue', 'boardwalk', 'park-place'], 300)
+    state = submit(state, 'P4', ['boardwalk', 'park-place', 'illinois-avenue'], 450)
+    const result = awards(resolve(state))
+    const cheapest = availableDeeds(draftState())[0]
+    expect(result['P2']?.deed).toBe('park-place')
+    expect(result['P3']?.deed).toBe('illinois-avenue')
+    expect(result['P4']).toEqual({ deed: cheapest, price: face(cheapest ?? '') })
+  })
+
+  it('grants the cheapest remaining deed free when the budget cannot cover it (rule 6)', () => {
+    const base = draftState()
+    const broke: GameState = {
+      ...base,
+      players: { ...base.players, P4: { ...base.players.P4, draftBudget: 10, cleanCash: 10 } },
+    }
+    let state = broke
+    state = submit(state, 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
+    state = submit(state, 'P2', ['illinois-avenue', 'park-place', 'short-line'], 240)
+    state = submit(state, 'P3', ['reading-railroad', 'park-place', 'short-line'], 200)
+    const events = resolve(state)
+    const award = awards(events)['P4']
+    expect(award?.price).toBe(0)
+    expect(face(award?.deed ?? '')).toBe(60)
+    const after = events.reduce(reduce, state)
+    expect(after.players.P4.draftBudget).toBe(10)
+    expect(deedCount(after, 'P4')).toBe(1)
+  })
+})
+
+describe('the whole draft', () => {
+  it('allocates all 28 deeds, seven each, over exactly seven rounds', () => {
+    expect(DRAFT_ROUNDS).toBe(7)
+    let state = draftState()
+    for (let round = 1; round <= DRAFT_ROUNDS; round += 1) {
+      const open = availableDeeds(state)
+      for (const player of CONFIG.turnOrder) {
+        const ranked = [open[0], open[1], open[2]] as [DeedId, DeedId, DeedId]
+        state = submit(state, player, ranked)
+      }
+      state = resolve(state).reduce(reduce, state)
+      expect(state.draft?.round, `after round ${round}`).toBe(round + 1)
+    }
+    expect(state.draft?.complete).toBe(true)
+    for (const player of CONFIG.turnOrder) {
+      expect(deedCount(state, player), player).toBe(7)
+      expect(state.players[player].draftBudget).toBe(state.players[player].cleanCash)
+    }
+    expect(Object.values(state.deeds).every((d) => d.owner !== null)).toBe(true)
+    expect(DEED_IDS).toHaveLength(28)
+    const spent = CONFIG.turnOrder.reduce(
+      (total, p) => total + (ECONOMY.STARTING_CASH - state.players[p].cleanCash), 0)
+    expect(state.treasury).toBe(spent)
+  })
+
+  it('is deterministic: resolving the same state twice yields the same events', () => {
+    let state = draftState()
+    state = submit(state, 'P1', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    state = submit(state, 'P2', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    state = submit(state, 'P3', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    state = submit(state, 'P4', ['reading-railroad', 'boardwalk', 'short-line'], 340)
+    expect(resolve(state)).toEqual(resolve(state))
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run packages/engine/src/contexts/draft/draft.test.ts`
+Expected: FAIL — `Cannot find module './index.js'`.
+
+- [ ] **Step 3: Write `contexts/draft/selectors.ts`**
+
+```ts
+import { DEEDS, DEED_IDS } from '../../config/board.js'
+import type { GameState } from '../../core/state.js'
+import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import { PLAYER_IDS } from '../../core/types.js'
+
+/** 28 deeds / 4 players. Every player ends with exactly seven. Spec section 3. */
+export const DRAFT_ROUNDS = DEED_IDS.length / PLAYER_IDS.length
+
+/** Unallocated deeds, cheapest first; square index breaks face-value ties. */
+export function availableDeeds(state: GameState): readonly DeedId[] {
+  return Object.values(state.deeds)
+    .filter((deed) => deed.owner === null)
+    .sort((a, b) => a.faceValue - b.faceValue || a.square - b.square)
+    .map((deed) => deed.id)
+}
+
+export function cheapestAvailable(state: GameState): DeedId | null {
+  return availableDeeds(state)[0] ?? null
+}
+
+export function faceValueOf(deedId: DeedId): Money {
+  return DEEDS[deedId]?.faceValue ?? 0
+}
+
+export function faceValueAcquired(state: GameState, player: PlayerId): Money {
+  return Object.values(state.deeds)
+    .filter((deed) => deed.owner === player)
+    .reduce((total, deed) => total + deed.faceValue, 0)
+}
+
+export function deedCount(state: GameState, player: PlayerId): number {
+  return Object.values(state.deeds).filter((deed) => deed.owner === player).length
+}
+
+export function hasSubmitted(state: GameState, player: PlayerId): boolean {
+  return state.draft?.submissions.some((s) => s.player === player) ?? false
+}
+
+export function turnIndex(state: GameState, player: PlayerId): number {
+  return state.config.turnOrder.indexOf(player)
+}
+```
+
+- [ ] **Step 4: Write the collision algorithm in `contexts/draft/resolve.ts`**
+
+```ts
+import type { DraftSubmission, GameState } from '../../core/state.js'
+import type { GameEvent } from '../../core/events.js'
+import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import {
+  availableDeeds, faceValueAcquired, faceValueOf, turnIndex,
+} from './selectors.js'
+
+interface Allocation {
+  readonly player: PlayerId
+  readonly deed: DeedId
+  readonly price: Money
+  readonly contested: boolean
+}
+
+/**
+ * Spec section 3. Rules are applied in this order:
+ *   6. A player who cannot afford the cheapest remaining deed gets it free.
+ *   1. A deed nominated first by exactly one player goes to them at face value.
+ *   2. A contested deed goes to the highest bid, who pays their own bid.
+ *   3. Losers cascade to their second then third choice at face value.
+ *   4. Cascade collisions resolve to the lower total face value acquired.
+ *   5. A player whose three choices are all gone takes the cheapest remaining.
+ *
+ * "Total face value acquired so far" is snapshotted before any of this round's
+ * allocations, so resolution does not depend on the order deeds are awarded.
+ */
+export function resolveDraftRound(state: GameState): readonly GameEvent[] {
+  const draft = state.draft
+  if (draft === null) return []
+
+  const order = state.config.turnOrder
+  const acquired = new Map<PlayerId, Money>(
+    order.map((p) => [p, faceValueAcquired(state, p)]),
+  )
+  const submissions = new Map<PlayerId, DraftSubmission>(
+    draft.submissions.map((s) => [s.player, s]),
+  )
+  const available = new Set<DeedId>(availableDeeds(state))
+  const allocations: Allocation[] = []
+
+  const face = (p: PlayerId): Money => acquired.get(p) ?? 0
+  const seat = (p: PlayerId): number => turnIndex(state, p)
+  const award = (player: PlayerId, deed: DeedId, price: Money, contested: boolean): void => {
+    allocations.push({ player, deed, price, contested })
+    available.delete(deed)
+  }
+  const squareOf = (deed: DeedId): number => state.deeds[deed]?.square ?? 0
+  const cheapest = (): DeedId | null =>
+    [...available].sort((a, b) =>
+      faceValueOf(a) - faceValueOf(b) || squareOf(a) - squareOf(b))[0] ?? null
+
+  // --- Rule 6, first, so "cheapest remaining" is unambiguous. ---
+  const contenders: PlayerId[] = []
+  for (const player of order) {
+    const floor = cheapest()
+    if (floor === null) continue
+    if (state.players[player].draftBudget < faceValueOf(floor)) {
+      award(player, floor, 0, false)
+      continue
+    }
+    contenders.push(player)
+  }
+
+  // --- Rules 1 and 2: first-choice contests. ---
+  const rank = new Map<PlayerId, number>(contenders.map((p) => [p, 0]))
+  const firstChoices = new Map<DeedId, PlayerId[]>()
+  const cascading: PlayerId[] = []
+  for (const player of contenders) {
+    const submission = submissions.get(player)
+    if (submission === undefined) {
+      rank.set(player, 3)
+      cascading.push(player)
+      continue
+    }
+    const target = submission.ranked[0]
+    if (!available.has(target)) {
+      rank.set(player, 1)
+      cascading.push(player)
+      continue
+    }
+    firstChoices.set(target, [...(firstChoices.get(target) ?? []), player])
+  }
+  for (const [deed, group] of firstChoices) {
+    const winner = [...group].sort((a, b) =>
+      bidOf(submissions, b) - bidOf(submissions, a)
+      || face(a) - face(b)
+      || seat(a) - seat(b))[0]
+    if (winner === undefined) continue
+    const contested = group.length > 1
+    award(winner, deed, contested ? bidOf(submissions, winner) : faceValueOf(deed), contested)
+    for (const loser of group) {
+      if (loser === winner) continue
+      rank.set(loser, 1)
+      cascading.push(loser)
+    }
+  }
+
+  // --- Rules 3 and 4: cascade to the second then third choice. ---
+  const exhausted: PlayerId[] = []
+  let queue = order.filter((p) => cascading.includes(p))
+  while (queue.length > 0) {
+    const targets = new Map<DeedId, PlayerId[]>()
+    for (const player of queue) {
+      const submission = submissions.get(player)
+      let index = rank.get(player) ?? 3
+      while (submission !== undefined && index < 3
+        && !available.has(submission.ranked[index] ?? '')) {
+        index += 1
+      }
+      rank.set(player, index)
+      const target = submission?.ranked[index]
+      if (submission === undefined || index >= 3 || target === undefined) {
+        exhausted.push(player)
+        continue
+      }
+      targets.set(target, [...(targets.get(target) ?? []), player])
+    }
+    const next: PlayerId[] = []
+    for (const [deed, group] of targets) {
+      const winner = [...group].sort((a, b) => face(a) - face(b) || seat(a) - seat(b))[0]
+      if (winner === undefined) continue
+      award(winner, deed, faceValueOf(deed), false)
+      for (const loser of group) {
+        if (loser === winner) continue
+        rank.set(loser, (rank.get(loser) ?? 0) + 1)
+        next.push(loser)
+      }
+    }
+    queue = order.filter((p) => next.includes(p))
+  }
+
+  // --- Rule 5, with rule 6 re-applied to whatever is actually left. ---
+  const stragglers = [...exhausted].sort((a, b) => face(a) - face(b) || seat(a) - seat(b))
+  for (const player of stragglers) {
+    const deed = cheapest()
+    if (deed === null) break
+    const price = state.players[player].draftBudget >= faceValueOf(deed)
+      ? faceValueOf(deed)
+      : 0
+    award(player, deed, price, false)
+  }
+
+  const events: GameEvent[] = allocations
+    .sort((a, b) => seat(a.player) - seat(b.player))
+    .map((a) => ({
+      type: 'DraftDeedAwarded',
+      player: a.player,
+      deed: a.deed,
+      price: a.price,
+      contested: a.contested,
+    }))
+  events.push({ type: 'DraftRoundResolved', round: draft.round })
+  return events
+}
+
+function bidOf(
+  submissions: ReadonlyMap<PlayerId, DraftSubmission>,
+  player: PlayerId,
+): Money {
+  return submissions.get(player)?.maxBid ?? 0
+}
+```
+
+- [ ] **Step 5: Write `contexts/draft/reduce.ts`**
+
+```ts
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+import { DRAFT_ROUNDS } from './selectors.js'
+
+export function reduceDraft(state: GameState, event: GameEvent): GameState {
+  switch (event.type) {
+    case 'PhaseAdvanced':
+      if (event.phase !== 'draft') return state
+      return { ...state, draft: { round: 1, submissions: [], complete: false } }
+
+    case 'DraftSubmitted': {
+      if (state.draft === null) return state
+      return {
+        ...state,
+        draft: {
+          ...state.draft,
+          submissions: [...state.draft.submissions, {
+            player: event.player,
+            ranked: [
+              event.ranked[0] ?? '', event.ranked[1] ?? '', event.ranked[2] ?? '',
+            ],
+            maxBid: event.maxBid,
+          }],
+        },
+      }
+    }
+
+    case 'DraftDeedAwarded': {
+      const deed = state.deeds[event.deed]
+      if (deed === undefined) return state
+      const player = state.players[event.player]
+      return {
+        ...state,
+        deeds: { ...state.deeds, [event.deed]: { ...deed, owner: event.player } },
+        players: {
+          ...state.players,
+          [event.player]: {
+            ...player,
+            // The budget IS the operating cash. Spec section 4: one unified pot.
+            draftBudget: player.draftBudget - event.price,
+            cleanCash: player.cleanCash - event.price,
+          },
+        },
+        treasury: state.treasury + event.price,
+      }
+    }
+
+    case 'DraftRoundResolved': {
+      if (state.draft === null) return state
+      const round = state.draft.round + 1
+      return {
+        ...state,
+        draft: { round, submissions: [], complete: round > DRAFT_ROUNDS },
+      }
+    }
+
+    default:
+      return state
+  }
+}
+```
+
+- [ ] **Step 6: Write `contexts/draft/decide.ts`**
+
+```ts
+import { reject, type Rejection } from '../../core/errors.js'
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import { resolveDraftRound } from './resolve.js'
+import {
+  cheapestAvailable, faceValueOf, hasSubmitted,
+} from './selectors.js'
+
+export type DraftCommand =
+  | {
+      readonly kind: 'submit-draft'
+      readonly player: PlayerId
+      readonly ranked: readonly [DeedId, DeedId, DeedId]
+      readonly maxBid: Money
+    }
+  | { readonly kind: 'resolve-draft-round' }
+
+export function decideDraft(
+  state: GameState,
+  command: DraftCommand,
+): readonly GameEvent[] | Rejection {
+  if (state.phase !== 'draft' || state.draft === null || state.draft.complete) {
+    return reject('WRONG_PHASE', 'The draft is not open.')
+  }
+
+  if (command.kind === 'submit-draft') {
+    const { player, ranked, maxBid } = command
+    if (hasSubmitted(state, player)) {
+      return reject('ALREADY_SUBMITTED', 'You have already submitted this draft round.')
+    }
+    if (new Set(ranked).size !== 3) {
+      return reject('DEED_UNAVAILABLE', 'Your three choices must be three different deeds.')
+    }
+    for (const deed of ranked) {
+      const held = state.deeds[deed]
+      if (held === undefined) {
+        return reject('DEED_UNAVAILABLE', `There is no deed called ${deed}.`)
+      }
+      if (held.owner !== null) {
+        return reject('DEED_UNAVAILABLE', `${deed} was allocated in an earlier round.`)
+      }
+    }
+    const first = ranked[0]
+    if (maxBid < faceValueOf(first)) {
+      return reject('BID_BELOW_FACE', `Your bid must be at least the $${faceValueOf(first)} face value.`)
+    }
+    if (maxBid > state.players[player].draftBudget) {
+      return reject('BID_EXCEEDS_BUDGET', 'Your bid is more than your remaining budget.')
+    }
+    return [{ type: 'DraftSubmitted', player, ranked, maxBid }]
+  }
+
+  const floor = cheapestAvailable(state)
+  for (const player of state.config.turnOrder) {
+    if (hasSubmitted(state, player)) continue
+    // Rule 6 players never submit; everyone else must.
+    if (floor !== null && state.players[player].draftBudget < faceValueOf(floor)) continue
+    return reject('ALREADY_SUBMITTED', `${player} has not submitted this draft round yet.`)
+  }
+  return resolveDraftRound(state)
+}
+```
+
+- [ ] **Step 7: Write `contexts/draft/index.ts` and wire the root reducer**
+
+`packages/engine/src/contexts/draft/index.ts`:
+
+```ts
+export * from './selectors.js'
+export { resolveDraftRound } from './resolve.js'
+export { reduceDraft } from './reduce.js'
+export { decideDraft, type DraftCommand } from './decide.js'
+```
+
+In `packages/engine/src/core/reduce.ts`:
+
+```ts
+import { reduceBoard } from '../contexts/board/index.js'
+import { reduceDraft } from '../contexts/draft/index.js'
+import { initialState, reduceSession } from '../contexts/session/index.js'
+import type { GameEvent } from './events.js'
+import type { GameState } from './state.js'
+
+export function reduce(state: GameState, event: GameEvent): GameState {
+  return reduceDraft(reduceBoard(reduceSession(state, event), event), event)
+}
+```
+
+- [ ] **Step 8: Run the test to verify it passes**
+
+Run: `npx vitest run packages/engine/src/contexts/draft/draft.test.ts`
+Expected: PASS. `DraftRoundResolved` must be added to `GameEvent` — see
+**NEW EVENTS REQUIRED**. The seven-round test is the one that matters: 28 deeds
+allocated, exactly seven per player, no deed left unowned, and the Treasury
+holding exactly what the four players spent.
+
+- [ ] **Step 9: Verify the toolchain and commit**
+
+Add `export * from './contexts/draft/index.js'` to `packages/engine/src/index.ts`,
+then run `npm run typecheck && npm run lint && npm test`.
+
+```bash
+git add packages/engine/src/contexts/draft packages/engine/src/core/reduce.ts packages/engine/src/index.ts
+git commit -m "feat(draft): ranked-triple submission and collision resolution
+
+Implements all six rules from spec section 3. Contests are first-price;
+ties and cascade collisions break on the lower total face value acquired,
+snapshotted before the round so resolution is order-independent. A player
+who cannot afford the cheapest remaining deed receives it free, which is
+what guarantees every player exactly seven deeds."
+```
+
+---
+
+## NEW EVENTS REQUIRED
+
+One event beyond the Task 2 schema. Merge into `core/events.ts` under the
+`--- draft ---` group:
+
+```ts
+  | { type: 'DraftRoundResolved'; round: RoundNumber }
+```
+
+It marks the boundary between draft rounds. Without it the reducer has to infer
+"four awards have landed, so start the next round", which breaks the moment a
+round awards fewer than four deeds — and it makes the log unreadable at exactly
+the point a facilitator most wants to read it. It carries no randomness, so
+`STOCHASTIC_EVENTS` is unchanged.
+
+**One event should be removed.** `DraftRoundSkipped { player, compensation }` and
+`ECONOMY.DRAFT_SKIP_COMPENSATION` ($150) are dead. Spec section 3 rule 6 grants
+the cheapest remaining deed at no cost rather than paying compensation, and
+section 3 explains why in terms the design depends on: the flat per-deed carrying
+cost is incidence-neutral only because every player holds exactly seven deeds.
+`docs/reference/rulebook-content.md` line 504 still lists the $150 payment and is
+stale. Task 8 emits `DraftDeedAwarded` with `price: 0` instead.
+
+## CONTRACT ADDITIONS REQUIRED
+
+Two additions to the Task 2 contract. Neither introduces a parallel type.
+
+1. **`PlayerState.consecutiveDoubles: number`** in `core/state.ts`:
+
+```ts
+  /** 0-2. Rolling a third consecutive double sends the player to Jail. */
+  readonly consecutiveDoubles: number
+```
+
+The three-consecutive-doubles rule cannot be implemented without it. The reducer
+has no access to the event log, so the count has to be state. `initialState`
+seeds it at 0; `DiceRolled` increments or resets it; `SentToJail` clears it.
+
+2. **`'INVALID_DICE'`** added to `RejectionCode` in `core/errors.ts`. Dice arrive
+from the facilitator's keyboard, which is a system boundary, and no existing code
+describes "that is not a die".
+
+## JUDGMENT CALLS
+
+Where the spec left a gap, this is what was chosen and why.
+
+| # | Question | Choice |
+|---|---|---|
+| 1 | Does full-group rent doubling need the whole set undeveloped, or just the landed square? | **Whole set.** Spec section 2 says "undeveloped sets"; `docs/reference/rulebook-content.md` line 157 is explicit — "you own the entire colour group and none of it is developed". Standard Monopoly doubles per-square; this game does not. |
+| 2 | Does a mortgaged member of a group cancel the doubling? | **Yes.** A mortgaged deed "contributes nothing", and building already requires the full *unmortgaged* group. Consistent treatment. |
+| 3 | Do mortgaged railroads and utilities count toward the owned-count? | **No.** Same reasoning: a mortgaged deed contributes nothing. |
+| 4 | Rent on a deed the bank took in a liquidation? | **Zero.** Spec section 5 says the deed "becomes unowned-by-bank and is not re-drafted" — it is out of play. |
+| 5 | Who funds an unpayable rent bill? | **The Treasury.** The payee is always made whole; the payer's shortfall becomes distressed debt and the Treasury books the receivable. Money stays conserved, and it matches how an unpayable tax already works. |
+| 6 | Does the engine auto-draw on the credit line to cover a shortfall? | **No.** Spec section 5 makes drawing an Open-phase player action. Spec 19.8 says an unpayable tax, fine or rent becomes distressed debt immediately — no liquidation, no auction. |
+| 7 | Does "total face value acquired so far" include this draft round's awards? | **No, snapshotted at round start.** Otherwise resolution depends on the order deeds happen to be awarded, and the same submissions could produce different outcomes. |
+| 8 | When does rule 6 (free cheapest deed) get evaluated? | **Before contests, in turn order.** "Cheapest remaining" is only well defined at a fixed point in the resolution, and a player who cannot afford anything cannot submit a valid triple anyway. It is re-checked at rule 5 for anyone who cascades all the way out. |
+| 9 | Two players both hit rule 5 in the same round — who picks first? | **Lower total face value acquired, then turn order** — the same tie-break as rule 4, applied for consistency rather than inventing a third. |
+| 10 | Does a player leaving Jail on doubles get the extra roll? | **Yes.** The Markov model transitions out of state `(10, 0)` with the ordinary doubles rule, so the engine must match or the fixture assertion is a lie. |
+| 11 | Who advances the active player during Movement? | **Nobody — the facilitator.** Spec section 2: phases advance manually, with no enforced timer. `activePlayer` simply tracks whoever last rolled, set on `DiceRolled`. This avoids inventing a `TurnAdvanced` event. |
+| 12 | Where do railroad rents, utility multipliers and the 1.19 doubles factor live? | **`config/board.ts`.** The main plan assigns "rent tables" to that file, and these are rent tables. `config/economy.ts` keeps the tunable economic constants; the physical board is not tunable. |
+| 13 | `PlayerState.draftBudget` versus `cleanCash`. | **Kept in lockstep.** Spec section 4 gives one unified budget, so the two fields are the same pot viewed twice. Both are decremented on every award and the seven-round test asserts they stay equal. `draftBudget` is a candidate for deletion in a later cleanup. |
+| 14 | The fixture spells colour groups `"light blue"`; `ColorGroup` is `'light-blue'`. | **Normalise in the test.** The fixture is a derivation artefact and authoritative on probabilities, not on our type spellings. |
