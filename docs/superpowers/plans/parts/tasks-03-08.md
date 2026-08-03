@@ -9,13 +9,19 @@ groups — lives here. `config/economy.ts` owns tunable economic constants; this
 file owns the physical board, which is not tunable. Nothing else in the codebase
 may hard-code a square index, a face value or a rent figure.
 
+**House costs are 90% of standard**, via `ECONOMY.HOUSE_COST_MULTIPLIER`. The
+standard base costs (50/100/150/200 by group) are board data and live here; the
+multiplier is a tunable and lives in `economy.ts`. All four products are exact
+integers — 45, 90, 135, 180 — so no rounding rule is engaged.
+
 **Files:**
 - Create: `packages/engine/src/config/board.ts`
+- Modify: `packages/engine/src/config/economy.ts`
 - Modify: `packages/engine/src/index.ts`
 - Test: `packages/engine/src/config/board.test.ts`
 
 **Interfaces:**
-- Consumes: `ColorGroup`, `DeedId`, `Money`, `SquareIndex` from `core/types.js`; `DeedState` from `core/state.js`.
+- Consumes: `ColorGroup`, `DeedId`, `Money`, `SquareIndex` from `core/types.js`; `DeedState` from `core/state.js`; `ECONOMY` from `config/economy.js`.
 - Produces:
   - `type DeedDefinition = Omit<DeedState, 'owner' | 'mortgaged' | 'houses'> & { readonly name: string }`
   - `type SquareKind = 'go' | 'deed' | 'card' | 'tax' | 'jail' | 'free-parking' | 'go-to-jail'`
@@ -33,7 +39,23 @@ may hard-code a square index, a face value or a rent figure.
   - `const UTILITY_MULTIPLIER: readonly number[]` (indexed by utilities owned)
   - `const DOUBLES_ROLL_MULTIPLIER: number` (1.19, spec section 19.2)
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the two new economy constants**
+
+In `packages/engine/src/config/economy.ts`, inside the `ECONOMY` object, next to
+`HOUSE_SUPPLY`:
+
+```ts
+  /** House and hotel costs are 90% of standard. Applied in config/board.ts. */
+  HOUSE_COST_MULTIPLIER: 0.9,
+
+  /** Buildings sell back to the bank at half the price paid. Spec 19.6. */
+  BUILDING_SELLBACK_RATE: 0.5,
+```
+
+Delete `DRAFT_SKIP_COMPENSATION` in the same pass — spec section 3 rule 6 grants
+a deed, never cash, and nothing reads the constant.
+
+- [ ] **Step 2: Write the failing test**
 
 `packages/engine/src/config/board.test.ts`:
 
@@ -47,6 +69,7 @@ import {
   INCOME_TAX_SQUARE, JAIL_SQUARE, LUXURY_TAX_SQUARE, RAILROAD_RENT, SQUARES,
   UTILITY_MULTIPLIER, deedAt, deedById, totalFaceValue,
 } from './board.js'
+import { ECONOMY } from './economy.js'
 import type { ColorGroup } from '../core/types.js'
 
 interface FixtureRow {
@@ -154,6 +177,20 @@ describe('deeds', () => {
     }
   })
 
+  it('discounts house costs to 90% of standard, as exact integers', () => {
+    expect(ECONOMY.HOUSE_COST_MULTIPLIER).toBe(0.9)
+    const expected: Record<string, number> = {
+      brown: 45, 'light-blue': 45, pink: 90, orange: 90,
+      red: 135, yellow: 135, green: 180, 'dark-blue': 180,
+    }
+    for (const deed of DEED_LIST) {
+      const cost = expected[deed.group]
+      if (cost === undefined) continue
+      expect(deed.houseCost, deed.id).toBe(cost)
+      expect(Number.isInteger(deed.houseCost), deed.id).toBe(true)
+    }
+  })
+
   it('gives railroads and utilities no rent table and no house cost', () => {
     for (const id of [...GROUP_MEMBERS.railroad, ...GROUP_MEMBERS.utility]) {
       const deed = DEEDS[id]
@@ -170,16 +207,17 @@ describe('deeds', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Run the test to verify it fails**
 
 Run: `npx vitest run packages/engine/src/config/board.test.ts`
 Expected: FAIL — `Cannot find module './board.js'`.
 
-- [ ] **Step 3: Write the type surface and the deed table**
+- [ ] **Step 4: Write the type surface and the deed table**
 
 `packages/engine/src/config/board.ts`, first half:
 
 ```ts
+import { ECONOMY } from './economy.js'
 import type { ColorGroup, DeedId, Money, SquareIndex } from '../core/types.js'
 import type { DeedState } from '../core/state.js'
 
@@ -224,15 +262,21 @@ export const UTILITY_MULTIPLIER: readonly number[] = [0, 4, 10]
  */
 export const DOUBLES_ROLL_MULTIPLIER = 1.19
 
+/**
+ * `standardHouseCost` is the printed board figure; LEVERAGE charges 90% of it.
+ * 50/100/150/200 x 0.9 is exactly 45/90/135/180 in IEEE 754, so no rounding
+ * rule is engaged, but the guard keeps it integral if the multiplier is retuned.
+ */
 function deed(
   id: DeedId,
   name: string,
   square: SquareIndex,
   group: ColorGroup,
   faceValue: Money,
-  houseCost: Money,
+  standardHouseCost: Money,
   rentTable: readonly Money[],
 ): DeedDefinition {
+  const houseCost = Math.floor(standardHouseCost * ECONOMY.HOUSE_COST_MULTIPLIER)
   return { id, name, square, group, faceValue, houseCost, rentTable }
 }
 
@@ -268,7 +312,7 @@ export const DEED_LIST: readonly DeedDefinition[] = [
 ]
 ```
 
-- [ ] **Step 4: Write the square layout and the lookup tables**
+- [ ] **Step 5: Write the square layout and the lookup tables**
 
 Append to `packages/engine/src/config/board.ts`:
 
@@ -346,14 +390,14 @@ export function totalFaceValue(): Money {
 }
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [ ] **Step 6: Run the test to verify it passes**
 
 Run: `npx vitest run packages/engine/src/config/board.test.ts`
-Expected: PASS, 9 assertions green. The `$5,690` total and the fixture
+Expected: PASS, 10 assertions green. The `$5,690` total and the fixture
 name/group cross-check are the two that matter; if either fails, the deed table
 is wrong, not the test.
 
-- [ ] **Step 6: Export the board from the package surface**
+- [ ] **Step 7: Export the board from the package surface**
 
 Add to `packages/engine/src/index.ts`, after the existing exports:
 
@@ -361,20 +405,21 @@ Add to `packages/engine/src/index.ts`, after the existing exports:
 export * from './config/board.js'
 ```
 
-- [ ] **Step 7: Verify the toolchain is clean**
+- [ ] **Step 8: Verify the toolchain is clean**
 
 Run: `npm run typecheck && npm run lint && npm test`
 Expected: all pass.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add packages/engine/src/config/board.ts packages/engine/src/config/board.test.ts packages/engine/src/index.ts
+git add packages/engine/src/config packages/engine/src/index.ts
 git commit -m "feat(engine): add the 40-square board and 28 deed definitions
 
 Face values sum to exactly \$5,690, asserted directly. Square names and
 colour groups are cross-checked against tests/fixtures/landing-probabilities.json
-so the board and the Markov model cannot drift apart."
+so the board and the Markov model cannot drift apart. House costs are 90%
+of standard via ECONOMY.HOUSE_COST_MULTIPLIER, giving exact integers."
 ```
 
 ---

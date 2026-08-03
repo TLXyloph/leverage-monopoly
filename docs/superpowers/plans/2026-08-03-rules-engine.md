@@ -14,7 +14,14 @@
 
 - **Package `@leverage/engine` has zero runtime dependencies.** Dev dependencies only.
 - **No `Math.random`, no `Date.now`, no `new Date()`, no I/O anywhere in `packages/engine/src`.** Enforced by an ESLint rule and by a test that greps the built output.
-- **All money is integer dollars.** Never floats. Rounding is always `Math.floor` unless a rule states otherwise, and every rule that rounds says which way in its task.
+- **All money is integer dollars.** Never floats.
+- **Every percentage-of-money calculation MUST go through `core/money.ts`.** Never write
+  `Math.floor(amount * rate)` anywhere in the engine — it is wrong. `180 * 0.7` is
+  `125.99999999999999` in IEEE 754, so flooring it yields 125 and silently underpays the
+  70% floor; `0.25 + 0.05 * 2` is `0.35000000000000003`, which floors a $1,000 launder to
+  $649 instead of $650. Both bugs were found independently while validating this plan.
+  `floorPercent` works in integer basis points and is exact. An ESLint rule bans the raw
+  pattern, and every rule that rounds still states its direction in its task.
 - **Files stay under 500 lines.** Split by responsibility when approaching the limit.
 - **All public APIs are typed interfaces.** No `any`. `strict: true`, `noUncheckedIndexedAccess: true`.
 - **TDD.** Every task writes a failing test first, watches it fail, then implements.
@@ -35,6 +42,7 @@ packages/engine/
       board.ts              40 squares, deeds, rent tables, house costs
     core/
       types.ts              Money, PlayerId, DeedId, Era, Phase, branded types
+      money.ts              exact integer-basis-point percentage arithmetic
       state.ts              GameState, PlayerState, DeedState and sub-shapes
       events.ts             the GameEvent discriminated union
       commands.ts           the Command discriminated union
@@ -365,7 +373,80 @@ export type DiceRoll = readonly [number, number]
 export type ContractId = string
 ```
 
-- [ ] **Step 2: Write `config/economy.ts`**
+- [ ] **Step 2: Write `core/money.ts`**
+
+Every percentage-of-money calculation in the engine routes through here. Working in
+integer basis points sidesteps IEEE 754 entirely:
+
+```ts
+import type { Money } from './types.js'
+
+/** Convert a rate like 0.7 to integer basis points, e.g. 7000. */
+function toBasisPoints(rate: number): number {
+  return Math.round(rate * 10_000)
+}
+
+/**
+ * `amount * rate`, rounded down, computed exactly.
+ * Math.floor(180 * 0.7) is 125 because 180 * 0.7 is 125.99999999999999.
+ * floorPercent(180, 0.7) is 126.
+ */
+export function floorPercent(amount: Money, rate: number): Money {
+  return Math.floor((amount * toBasisPoints(rate)) / 10_000)
+}
+
+/** `amount * rate`, rounded up, computed exactly. */
+export function ceilPercent(amount: Money, rate: number): Money {
+  return Math.ceil((amount * toBasisPoints(rate)) / 10_000)
+}
+
+/** Sum of rates applied as one exact percentage, avoiding float accumulation. */
+export function floorPercentSum(amount: Money, rates: readonly number[]): Money {
+  const bp = rates.reduce((acc, r) => acc + toBasisPoints(r), 0)
+  return Math.floor((amount * bp) / 10_000)
+}
+```
+
+- [ ] **Step 3: Write the failing test for money arithmetic**
+
+`packages/engine/src/core/money.test.ts`. Both cases below are real bugs found while
+validating this plan, not hypotheticals:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { floorPercent, ceilPercent, floorPercentSum } from './money.js'
+
+describe('floorPercent', () => {
+  it('is exact where naive float arithmetic is not', () => {
+    // Math.floor(180 * 0.7) === 125 — 180 * 0.7 is 125.99999999999999
+    expect(floorPercent(180, 0.7)).toBe(126)
+    expect(floorPercent(350, 0.7)).toBe(245)
+  })
+
+  it('handles the rates the ruleset actually uses', () => {
+    expect(floorPercent(200, 0.5)).toBe(100)   // mortgage
+    expect(floorPercent(200, 0.55)).toBe(110)  // unmortgage
+    expect(floorPercent(400, 0.8)).toBe(320)   // liquidation floor
+    expect(floorPercent(100, 0.9)).toBe(90)    // house cost multiplier
+  })
+})
+
+describe('floorPercentSum', () => {
+  it('accumulates rates without float drift', () => {
+    // 0.25 + 0.05 * 2 === 0.35000000000000003, which floors $1000 to $649
+    expect(floorPercentSum(1000, [0.25, 0.05, 0.05])).toBe(350)
+  })
+})
+
+describe('ceilPercent', () => {
+  it('rounds up exactly', () => {
+    expect(ceilPercent(180, 0.7)).toBe(126)
+    expect(ceilPercent(101, 0.5)).toBe(51)
+  })
+})
+```
+
+- [ ] **Step 4: Write `config/economy.ts`**
 
 Every one of these is validated by simulation and cited in spec section 19. This file is the ONLY place any of these numbers may appear:
 

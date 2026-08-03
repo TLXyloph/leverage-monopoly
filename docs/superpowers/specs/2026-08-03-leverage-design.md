@@ -435,10 +435,11 @@ score = coverage x (1 - 0.25 x concentration) / (1 + 0.10 x leverage)
 | ≥ 0.6 | B |
 | < 0.6 | CCC |
 
-The formula is deliberately coverage-dominant and forgiving of concentration. A pool
-of three loans all made to the same player at 3.8x leverage still rates its senior
-slice **AA**. That rating is arithmetically correct and analytically worthless, which
-is both the joke and a genuine strategy. The Era IV deck issues downgrades.
+The formula is deliberately coverage-dominant and forgiving of concentration. In the
+worked example above, three of the pool's four assets are loans to the same player at
+3.8x leverage — 76% of expected cashflow from one obligor — and the senior slice still
+rates **AA**. That rating is arithmetically correct and analytically worthless, which is
+both the joke and a genuine strategy. The Era IV deck issues downgrades.
 
 Alongside the rating, the app always displays obligor concentration and weighted
 borrower leverage as raw figures, so the information is available to anyone who reads.
