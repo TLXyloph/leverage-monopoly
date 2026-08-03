@@ -866,3 +866,925 @@ asserted directly. unlockMode 'all' bypasses gating entirely."
 ```
 
 ---
+
+### Task 5: `board` context — movement, doubles, jail, GO salary and taxes
+
+**Files:**
+- Create: `packages/engine/src/contexts/board/selectors.ts`
+- Create: `packages/engine/src/contexts/board/reduce.ts`
+- Create: `packages/engine/src/contexts/board/decide.ts`
+- Create: `packages/engine/src/contexts/board/index.ts`
+- Modify: `packages/engine/src/core/reduce.ts`
+- Modify: `packages/engine/src/index.ts`
+- Test: `packages/engine/src/contexts/board/board.test.ts`
+
+**Interfaces:**
+- Consumes: `GameState`, `PlayerState` from `core/state.js`; `GameEvent` from `core/events.js`; `DiceRoll`, `Money`, `PlayerId`, `SquareIndex` from `core/types.js`; `reject`, `Rejection` from `core/errors.js`; `ECONOMY` from `config/economy.js`; `BOARD_SIZE`, `GO_TO_JAIL_SQUARE`, `INCOME_TAX_SQUARE`, `JAIL_SQUARE`, `LUXURY_TAX_SQUARE`, `deedAt` from `config/board.js`; `initialState` from `contexts/session/index.js` (tests only).
+- Produces:
+  - `function diceTotal(dice: DiceRoll): number`
+  - `function isDoubles(dice: DiceRoll): boolean`
+  - `function destination(from: SquareIndex, total: number): SquareIndex`
+  - `function passesGo(from: SquareIndex, total: number): boolean`
+  - `function shortfall(cash: Money, amount: Money): Money`
+  - `function reduceBoard(state: GameState, event: GameEvent): GameState`
+  - `type BoardCommand = { readonly kind: 'roll-dice'; readonly player: PlayerId; readonly dice: DiceRoll }`
+  - `function decideBoard(state: GameState, command: BoardCommand): readonly GameEvent[] | Rejection`
+
+**Money handling contract, used by every payment in Tasks 5 and 6.** An event
+carries the *full* obligation. The reducer pays what the payer's clean cash
+covers; a player-to-player payment is topped up by the Treasury so the payee is
+always made whole, and a Treasury-bound payment simply books the shortfall as a
+receivable. `decide` emits `DistressedDebtIncurred` for the same shortfall, and
+Task 10 owns that reducer. Spec section 19.8: an unpayable tax, jail fee or rent
+bill becomes distressed debt immediately — there is no auto-draw on the credit
+line and no liquidation.
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/engine/src/contexts/board/board.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { decideBoard, destination, isDoubles, passesGo } from './index.js'
+import { initialState } from '../session/index.js'
+import { reduce } from '../../core/reduce.js'
+import { isRejection } from '../../core/errors.js'
+import { ECONOMY } from '../../config/economy.js'
+import type { GameConfig, GameState } from '../../core/state.js'
+import type { GameEvent } from '../../core/events.js'
+import type { DiceRoll, PlayerId } from '../../core/types.js'
+
+const CONFIG: GameConfig = {
+  turnOrder: ['P1', 'P2', 'P3', 'P4'],
+  unlockMode: 'progressive',
+  winCondition: { kind: 'fixed-rounds' },
+}
+
+function movementState(overrides: Partial<GameState['players']['P1']> = {}): GameState {
+  const base = initialState(CONFIG)
+  return {
+    ...base,
+    phase: 'movement',
+    players: { ...base.players, P1: { ...base.players.P1, ...overrides } },
+  }
+}
+
+function roll(state: GameState, dice: DiceRoll, player: PlayerId = 'P1'): readonly GameEvent[] {
+  const result = decideBoard(state, { kind: 'roll-dice', player, dice })
+  if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
+  return result
+}
+
+function apply(state: GameState, events: readonly GameEvent[]): GameState {
+  return events.reduce(reduce, state)
+}
+
+function totalMoney(state: GameState): number {
+  return Object.values(state.players).reduce((t, p) => t + p.cleanCash, 0) + state.treasury
+}
+
+describe('movement arithmetic', () => {
+  it('wraps the board and detects passing GO', () => {
+    expect(destination(0, 7)).toBe(7)
+    expect(destination(39, 3)).toBe(2)
+    expect(destination(34, 6)).toBe(0)
+    expect(passesGo(0, 7)).toBe(false)
+    expect(passesGo(39, 3)).toBe(true)
+    expect(passesGo(34, 6)).toBe(true)
+    expect(isDoubles([4, 4])).toBe(true)
+    expect(isDoubles([4, 5])).toBe(false)
+  })
+})
+
+describe('rolling and moving', () => {
+  it('moves the token and emits nothing else on a quiet square', () => {
+    const before = movementState({ position: 0 })
+    const events = roll(before, [3, 4])
+    expect(events).toEqual([
+      { type: 'DiceRolled', player: 'P1', dice: [3, 4] },
+      { type: 'TokenMoved', player: 'P1', from: 0, to: 7, passedGo: false },
+    ])
+    const after = apply(before, events)
+    expect(after.players.P1.position).toBe(7)
+    expect(after.activePlayer).toBe('P1')
+  })
+
+  it('pays the $350 GO salary on passing GO', () => {
+    const before = movementState({ position: 36 })
+    const events = roll(before, [2, 4])
+    expect(events).toContainEqual({
+      type: 'SalaryPaid', player: 'P1', amount: ECONOMY.GO_SALARY,
+    })
+    const after = apply(before, events)
+    expect(after.players.P1.position).toBe(2)
+    expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH + 350)
+    expect(after.treasury).toBe(-350)
+    expect(totalMoney(after)).toBe(totalMoney(before))
+  })
+
+  it('pays the GO salary on landing exactly on GO', () => {
+    const before = movementState({ position: 34 })
+    const after = apply(before, roll(before, [3, 3]))
+    expect(after.players.P1.position).toBe(0)
+    expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH + 350)
+  })
+
+  it('charges $200 Income Tax on square 4 and $100 Luxury Tax on square 38', () => {
+    const income = movementState({ position: 0 })
+    const afterIncome = apply(income, roll(income, [1, 3]))
+    expect(afterIncome.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH - 200)
+    expect(afterIncome.treasury).toBe(200)
+
+    const luxury = movementState({ position: 33 })
+    const afterLuxury = apply(luxury, roll(luxury, [2, 3]))
+    expect(afterLuxury.players.P1.position).toBe(38)
+    expect(afterLuxury.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH - 100)
+    expect(afterLuxury.treasury).toBe(100)
+  })
+
+  it('books an unpayable tax as distressed debt rather than negative cash', () => {
+    const before = movementState({ position: 0, cleanCash: 30 })
+    const events = roll(before, [1, 3])
+    expect(events).toContainEqual({
+      type: 'TaxPaid', player: 'P1', amount: 200, kind: 'income',
+    })
+    expect(events).toContainEqual({
+      type: 'DistressedDebtIncurred', player: 'P1', amount: 170,
+    })
+    const after = apply(before, events)
+    expect(after.players.P1.cleanCash).toBe(0)
+    expect(after.treasury).toBe(30)
+  })
+})
+
+describe('jail', () => {
+  it('sends a player to jail from square 30 without paying GO', () => {
+    const before = movementState({ position: 26 })
+    const events = roll(before, [1, 3])
+    expect(events).toContainEqual({
+      type: 'SentToJail', player: 'P1', reason: 'square',
+    })
+    const after = apply(before, events)
+    expect(after.players.P1.position).toBe(10)
+    expect(after.players.P1.inJail).toBe(true)
+    expect(after.players.P1.consecutiveDoubles).toBe(0)
+  })
+
+  it('sends a player to jail on the third consecutive double without moving', () => {
+    const before = movementState({ position: 18, consecutiveDoubles: 2 })
+    const events = roll(before, [5, 5])
+    expect(events).toEqual([
+      { type: 'DiceRolled', player: 'P1', dice: [5, 5] },
+      { type: 'SentToJail', player: 'P1', reason: 'triple-doubles' },
+    ])
+    const after = apply(before, events)
+    expect(after.players.P1.position).toBe(10)
+  })
+
+  it('counts consecutive doubles and resets on a non-double', () => {
+    let state = movementState({ position: 0 })
+    state = apply(state, roll(state, [2, 2]))
+    expect(state.players.P1.consecutiveDoubles).toBe(1)
+    state = apply(state, roll(state, [3, 3]))
+    expect(state.players.P1.consecutiveDoubles).toBe(2)
+    state = apply(state, roll(state, [1, 2]))
+    expect(state.players.P1.consecutiveDoubles).toBe(0)
+  })
+
+  it('charges the mandatory $50 to leave jail, then moves normally', () => {
+    const before = movementState({ position: 10, inJail: true })
+    const events = roll(before, [3, 4])
+    expect(events[1]).toEqual({
+      type: 'JailExited', player: 'P1', fee: ECONOMY.JAIL_FEE,
+    })
+    const after = apply(before, events)
+    expect(after.players.P1.inJail).toBe(false)
+    expect(after.players.P1.position).toBe(17)
+    expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH - 50)
+    expect(after.treasury).toBe(50)
+    expect(totalMoney(after)).toBe(totalMoney(before))
+  })
+})
+
+describe('validation', () => {
+  it('refuses a roll outside the movement phase', () => {
+    const state = { ...movementState(), phase: 'open' as const }
+    const result = decideBoard(state, { kind: 'roll-dice', player: 'P1', dice: [1, 1] })
+    expect(isRejection(result) && result.code).toBe('WRONG_PHASE')
+  })
+
+  it('refuses dice outside 1-6', () => {
+    const result = decideBoard(movementState(), {
+      kind: 'roll-dice', player: 'P1', dice: [0, 7],
+    })
+    expect(isRejection(result) && result.code).toBe('INVALID_DICE')
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run packages/engine/src/contexts/board/board.test.ts`
+Expected: FAIL — `Cannot find module './index.js'`.
+
+- [ ] **Step 3: Write `contexts/board/selectors.ts`**
+
+```ts
+import { BOARD_SIZE } from '../../config/board.js'
+import type { DiceRoll, Money, SquareIndex } from '../../core/types.js'
+
+export function diceTotal(dice: DiceRoll): number {
+  return dice[0] + dice[1]
+}
+
+export function isDoubles(dice: DiceRoll): boolean {
+  return dice[0] === dice[1]
+}
+
+export function isLegalDie(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 6
+}
+
+export function destination(from: SquareIndex, total: number): SquareIndex {
+  return (from + total) % BOARD_SIZE
+}
+
+/** GO pays on passing or on landing exactly. Spec section 2. */
+export function passesGo(from: SquareIndex, total: number): boolean {
+  return from + total >= BOARD_SIZE
+}
+
+/** The part of an obligation the payer's clean cash cannot cover. */
+export function shortfall(cash: Money, amount: Money): Money {
+  return Math.max(0, amount - cash)
+}
+```
+
+- [ ] **Step 4: Write `contexts/board/reduce.ts`**
+
+```ts
+import { JAIL_SQUARE } from '../../config/board.js'
+import type { GameEvent } from '../../core/events.js'
+import type { GameState, PlayerState } from '../../core/state.js'
+import type { Money, PlayerId } from '../../core/types.js'
+import { isDoubles, shortfall } from './selectors.js'
+
+function withPlayer(
+  state: GameState,
+  id: PlayerId,
+  patch: Partial<PlayerState>,
+): GameState {
+  return {
+    ...state,
+    players: { ...state.players, [id]: { ...state.players[id], ...patch } },
+  }
+}
+
+/** Player pays the Treasury. Any shortfall stays unpaid as a receivable. */
+function payTreasury(state: GameState, id: PlayerId, amount: Money): GameState {
+  const paid = Math.min(state.players[id].cleanCash, amount)
+  return {
+    ...withPlayer(state, id, { cleanCash: state.players[id].cleanCash - paid }),
+    treasury: state.treasury + paid,
+  }
+}
+
+function payFromTreasury(state: GameState, id: PlayerId, amount: Money): GameState {
+  return {
+    ...withPlayer(state, id, { cleanCash: state.players[id].cleanCash + amount }),
+    treasury: state.treasury - amount,
+  }
+}
+
+/**
+ * Player-to-player transfer. The payee is always made whole; the Treasury funds
+ * whatever the payer could not, against the distressed debt booked separately.
+ */
+export function transfer(
+  state: GameState,
+  from: PlayerId,
+  to: PlayerId,
+  amount: Money,
+): GameState {
+  const cash = state.players[from].cleanCash
+  const unpaid = shortfall(cash, amount)
+  const paid = amount - unpaid
+  const afterPayer = withPlayer(state, from, { cleanCash: cash - paid })
+  const afterPayee = withPlayer(afterPayer, to, {
+    cleanCash: afterPayer.players[to].cleanCash + amount,
+  })
+  return { ...afterPayee, treasury: afterPayee.treasury - unpaid }
+}
+
+export function reduceBoard(state: GameState, event: GameEvent): GameState {
+  switch (event.type) {
+    case 'DiceRolled': {
+      const player = state.players[event.player]
+      return {
+        ...withPlayer(state, event.player, {
+          consecutiveDoubles: isDoubles(event.dice)
+            ? player.consecutiveDoubles + 1
+            : 0,
+        }),
+        activePlayer: event.player,
+      }
+    }
+    case 'TokenMoved':
+      return withPlayer(state, event.player, { position: event.to })
+    case 'SentToJail':
+      return withPlayer(state, event.player, {
+        position: JAIL_SQUARE,
+        inJail: true,
+        consecutiveDoubles: 0,
+      })
+    case 'JailExited':
+      return payTreasury(
+        withPlayer(state, event.player, { inJail: false }),
+        event.player,
+        event.fee,
+      )
+    case 'SalaryPaid':
+      return payFromTreasury(state, event.player, event.amount)
+    case 'TaxPaid':
+      return payTreasury(state, event.player, event.amount)
+    case 'RentCharged':
+      return transfer(state, event.from, event.to, event.amount)
+    default:
+      return state
+  }
+}
+```
+
+- [ ] **Step 5: Write `contexts/board/decide.ts`**
+
+```ts
+import {
+  GO_TO_JAIL_SQUARE, INCOME_TAX_SQUARE, LUXURY_TAX_SQUARE,
+} from '../../config/board.js'
+import { ECONOMY } from '../../config/economy.js'
+import { reject, type Rejection } from '../../core/errors.js'
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+import type { DiceRoll, Money, PlayerId, SquareIndex } from '../../core/types.js'
+import {
+  destination, diceTotal, isDoubles, isLegalDie, passesGo, shortfall,
+} from './selectors.js'
+
+export type BoardCommand = {
+  readonly kind: 'roll-dice'
+  readonly player: PlayerId
+  readonly dice: DiceRoll
+}
+
+/**
+ * A running cash ledger for the turn. The reducer applies the same events in
+ * the same order against the same starting cash, so the two agree exactly.
+ */
+class TurnLedger {
+  private cash: Money
+
+  constructor(cash: Money) {
+    this.cash = cash
+  }
+
+  /** Returns the unpayable part, and debits what could be paid. */
+  charge(amount: Money): Money {
+    const unpaid = shortfall(this.cash, amount)
+    this.cash -= amount - unpaid
+    return unpaid
+  }
+
+  credit(amount: Money): void {
+    this.cash += amount
+  }
+}
+
+export function decideBoard(
+  state: GameState,
+  command: BoardCommand,
+): readonly GameEvent[] | Rejection {
+  if (command.kind !== 'roll-dice') {
+    return reject('WRONG_PHASE', 'Unknown board command.')
+  }
+  if (state.phase !== 'movement') {
+    return reject('WRONG_PHASE', 'Dice may only be entered during the Movement phase.')
+  }
+  const { player, dice } = command
+  if (!isLegalDie(dice[0]) || !isLegalDie(dice[1])) {
+    return reject('INVALID_DICE', 'Each die must show a whole number from 1 to 6.')
+  }
+
+  const state0 = state.players[player]
+  const ledger = new TurnLedger(state0.cleanCash)
+  const events: GameEvent[] = [{ type: 'DiceRolled', player, dice }]
+
+  if (state0.inJail) {
+    events.push({ type: 'JailExited', player, fee: ECONOMY.JAIL_FEE })
+    pushShortfall(events, player, ledger.charge(ECONOMY.JAIL_FEE))
+  }
+
+  if (isDoubles(dice) && state0.consecutiveDoubles === 2) {
+    events.push({ type: 'SentToJail', player, reason: 'triple-doubles' })
+    return events
+  }
+
+  const total = diceTotal(dice)
+  const from = state0.position
+  const to = destination(from, total)
+  const passed = passesGo(from, total)
+  events.push({ type: 'TokenMoved', player, from, to, passedGo: passed })
+  if (passed) {
+    events.push({ type: 'SalaryPaid', player, amount: ECONOMY.GO_SALARY })
+    ledger.credit(ECONOMY.GO_SALARY)
+  }
+  events.push(...resolveLanding(state, player, to, dice, ledger))
+  return events
+}
+
+function pushShortfall(events: GameEvent[], player: PlayerId, unpaid: Money): void {
+  if (unpaid > 0) {
+    events.push({ type: 'DistressedDebtIncurred', player, amount: unpaid })
+  }
+}
+
+/** Task 6 replaces the deed branch of this function with rent resolution. */
+function resolveLanding(
+  _state: GameState,
+  player: PlayerId,
+  square: SquareIndex,
+  _dice: DiceRoll,
+  ledger: TurnLedger,
+): readonly GameEvent[] {
+  const events: GameEvent[] = []
+  if (square === GO_TO_JAIL_SQUARE) {
+    events.push({ type: 'SentToJail', player, reason: 'square' })
+    return events
+  }
+  if (square === INCOME_TAX_SQUARE) {
+    events.push({ type: 'TaxPaid', player, amount: ECONOMY.INCOME_TAX, kind: 'income' })
+    pushShortfall(events, player, ledger.charge(ECONOMY.INCOME_TAX))
+    return events
+  }
+  if (square === LUXURY_TAX_SQUARE) {
+    events.push({ type: 'TaxPaid', player, amount: ECONOMY.LUXURY_TAX, kind: 'luxury' })
+    pushShortfall(events, player, ledger.charge(ECONOMY.LUXURY_TAX))
+    return events
+  }
+  return events
+}
+```
+
+- [ ] **Step 6: Write `contexts/board/index.ts` and wire the root reducer**
+
+`packages/engine/src/contexts/board/index.ts`:
+
+```ts
+export * from './selectors.js'
+export { reduceBoard, transfer } from './reduce.js'
+export { decideBoard, type BoardCommand } from './decide.js'
+```
+
+In `packages/engine/src/core/reduce.ts`, add the board reducer to the chain:
+
+```ts
+import { reduceBoard } from '../contexts/board/index.js'
+import { initialState, reduceSession } from '../contexts/session/index.js'
+import type { GameEvent } from './events.js'
+import type { GameState } from './state.js'
+
+export function reduce(state: GameState, event: GameEvent): GameState {
+  return reduceBoard(reduceSession(state, event), event)
+}
+```
+
+- [ ] **Step 7: Run the test to verify it passes**
+
+Run: `npx vitest run packages/engine/src/contexts/board/board.test.ts`
+Expected: PASS. `INVALID_DICE` must be added to `RejectionCode` — see
+**CONTRACT ADDITIONS REQUIRED**.
+
+- [ ] **Step 8: Export the board context and commit**
+
+Add `export * from './contexts/board/index.js'` to `packages/engine/src/index.ts`,
+then run `npm run typecheck && npm run lint && npm test`.
+
+```bash
+git add packages/engine/src/contexts/board packages/engine/src/core/reduce.ts packages/engine/src/index.ts
+git commit -m "feat(board): movement, doubles, jail, GO salary and fixed taxes
+
+Three consecutive doubles jails without moving. Leaving jail costs a
+mandatory \$50, matching the convention the landing-probability model
+assumes. Unpayable taxes and fees become distressed debt immediately
+per spec 19.8; clean cash never goes negative."
+```
+
+---
+
+### Task 6: `board` context — rent calculation
+
+Rent lives in its own file so `board` stays under the 500-line limit. The context
+now spans `selectors.ts`, `reduce.ts`, `decide.ts`, `rent.ts` and (Task 7)
+`markov.ts`, all re-exported through the single `index.ts`; other contexts still
+import only `contexts/board/index.js`.
+
+**Files:**
+- Create: `packages/engine/src/contexts/board/rent.ts`
+- Modify: `packages/engine/src/contexts/board/decide.ts`
+- Modify: `packages/engine/src/contexts/board/index.ts`
+- Test: `packages/engine/src/contexts/board/rent.test.ts`
+
+**Interfaces:**
+- Consumes: `GROUP_MEMBERS`, `RAILROAD_RENT`, `UTILITY_MULTIPLIER`, `deedAt` from `config/board.js`; `GameState`, `DeedState`, `RentFuture` from `core/state.js`; `ColorGroup`, `DeedId`, `DiceRoll`, `Money`, `PlayerId` from `core/types.js`; `diceTotal` from `./selectors.js`.
+- Produces:
+  - `function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money`
+  - `function activeFutureOn(state: GameState, deedId: DeedId): RentFuture | null`
+  - `function rentRecipient(state: GameState, deedId: DeedId): PlayerId | null`
+  - `function ownsUndevelopedGroup(state: GameState, group: ColorGroup, owner: PlayerId): boolean`
+  - `function countOwnedInGroup(state: GameState, group: ColorGroup, owner: PlayerId): number`
+  - `decideBoard` now emits `RentCharged`, `RentRoutedToFuture` and a rent `DistressedDebtIncurred`.
+
+- [ ] **Step 1: Write the failing test**
+
+`packages/engine/src/contexts/board/rent.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { decideBoard, rentDue, rentRecipient } from './index.js'
+import { initialState } from '../session/index.js'
+import { reduce } from '../../core/reduce.js'
+import { isRejection } from '../../core/errors.js'
+import { ECONOMY } from '../../config/economy.js'
+import type { GameConfig, GameState } from '../../core/state.js'
+import type { GameEvent } from '../../core/events.js'
+import type { DeedId, DiceRoll, PlayerId } from '../../core/types.js'
+
+const CONFIG: GameConfig = {
+  turnOrder: ['P1', 'P2', 'P3', 'P4'],
+  unlockMode: 'progressive',
+  winCondition: { kind: 'fixed-rounds' },
+}
+
+interface Holding {
+  readonly deed: DeedId
+  readonly owner: PlayerId
+  readonly houses?: number
+  readonly mortgaged?: boolean
+}
+
+function board(holdings: readonly Holding[], patch: Partial<GameState> = {}): GameState {
+  const base = initialState(CONFIG)
+  const deeds = { ...base.deeds }
+  for (const h of holdings) {
+    const deed = deeds[h.deed]
+    if (deed === undefined) throw new Error(`No such deed: ${h.deed}`)
+    deeds[h.deed] = {
+      ...deed,
+      owner: h.owner,
+      houses: h.houses ?? 0,
+      mortgaged: h.mortgaged ?? false,
+    }
+  }
+  return { ...base, phase: 'movement', deeds, ...patch }
+}
+
+const ROLL: DiceRoll = [3, 4]
+
+describe('colour group rent', () => {
+  it('charges base rent on a single unimproved deed', () => {
+    expect(rentDue(board([{ deed: 'boardwalk', owner: 'P2' }]), 'boardwalk', ROLL)).toBe(50)
+  })
+
+  it('doubles base rent when the owner holds the whole undeveloped group', () => {
+    const state = board([
+      { deed: 'boardwalk', owner: 'P2' },
+      { deed: 'park-place', owner: 'P2' },
+    ])
+    expect(rentDue(state, 'boardwalk', ROLL)).toBe(100)
+    expect(rentDue(state, 'park-place', ROLL)).toBe(70)
+  })
+
+  it('does not double a partially owned group', () => {
+    const state = board([
+      { deed: 'boardwalk', owner: 'P2' },
+      { deed: 'park-place', owner: 'P3' },
+    ])
+    expect(rentDue(state, 'boardwalk', ROLL)).toBe(50)
+  })
+
+  it('stops doubling as soon as any deed in the group is developed', () => {
+    const state = board([
+      { deed: 'boardwalk', owner: 'P2' },
+      { deed: 'park-place', owner: 'P2', houses: 1 },
+    ])
+    expect(rentDue(state, 'boardwalk', ROLL)).toBe(50)
+    expect(rentDue(state, 'park-place', ROLL)).toBe(175)
+  })
+
+  it('stops doubling when any deed in the group is mortgaged', () => {
+    const state = board([
+      { deed: 'boardwalk', owner: 'P2' },
+      { deed: 'park-place', owner: 'P2', mortgaged: true },
+    ])
+    expect(rentDue(state, 'boardwalk', ROLL)).toBe(50)
+    expect(rentDue(state, 'park-place', ROLL)).toBe(0)
+  })
+
+  it('reads the rent table by house count, hotel at index 5', () => {
+    const houses = [50, 200, 600, 1400, 1700, 2000]
+    for (let n = 0; n < houses.length; n += 1) {
+      const state = board([{ deed: 'boardwalk', owner: 'P2', houses: n }])
+      expect(rentDue(state, 'boardwalk', ROLL), `${n} houses`).toBe(houses[n])
+    }
+  })
+
+  it('charges nothing on an unowned, bank-owned or mortgaged deed', () => {
+    expect(rentDue(initialState(CONFIG), 'boardwalk', ROLL)).toBe(0)
+    expect(rentDue(board([{ deed: 'boardwalk', owner: 'P2', mortgaged: true }]), 'boardwalk', ROLL)).toBe(0)
+  })
+})
+
+describe('railroad and utility rent', () => {
+  const RAILROADS: readonly DeedId[] = [
+    'reading-railroad', 'pennsylvania-railroad', 'b-and-o-railroad', 'short-line',
+  ]
+
+  it('charges 25/50/100/200 by number of railroads owned', () => {
+    const expected = [25, 50, 100, 200]
+    for (let n = 1; n <= 4; n += 1) {
+      const state = board(RAILROADS.slice(0, n).map((deed) => ({ deed, owner: 'P2' as const })))
+      expect(rentDue(state, 'reading-railroad', ROLL), `${n} owned`).toBe(expected[n - 1])
+    }
+  })
+
+  it('excludes mortgaged railroads from the count', () => {
+    const state = board([
+      { deed: 'reading-railroad', owner: 'P2' },
+      { deed: 'short-line', owner: 'P2', mortgaged: true },
+    ])
+    expect(rentDue(state, 'reading-railroad', ROLL)).toBe(25)
+    expect(rentDue(state, 'short-line', ROLL)).toBe(0)
+  })
+
+  it('charges 4x the dice roll for one utility and 10x for both', () => {
+    const one = board([{ deed: 'electric-company', owner: 'P2' }])
+    expect(rentDue(one, 'electric-company', [3, 4])).toBe(28)
+    const both = board([
+      { deed: 'electric-company', owner: 'P2' },
+      { deed: 'water-works', owner: 'P2' },
+    ])
+    expect(rentDue(both, 'electric-company', [3, 4])).toBe(70)
+    expect(rentDue(both, 'water-works', [6, 6])).toBe(120)
+  })
+})
+
+describe('who pays and who receives', () => {
+  function land(state: GameState, from: number, dice: DiceRoll, player: PlayerId = 'P1') {
+    const seeded: GameState = {
+      ...state,
+      players: { ...state.players, [player]: { ...state.players[player], position: from } },
+    }
+    const result = decideBoard(seeded, { kind: 'roll-dice', player, dice })
+    if (isRejection(result)) throw new Error(result.message)
+    return { seeded, events: result }
+  }
+
+  it('charges rent from the lander to the owner', () => {
+    const state = board([{ deed: 'boardwalk', owner: 'P2' }])
+    const { seeded, events } = land(state, 32, [3, 4])
+    expect(events).toContainEqual({
+      type: 'RentCharged', from: 'P1', to: 'P2', deed: 'boardwalk', amount: 50,
+    })
+    const after = events.reduce(reduce, seeded)
+    expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH - 50)
+    expect(after.players.P2.cleanCash).toBe(ECONOMY.STARTING_CASH + 50)
+  })
+
+  it('charges the owner nothing on their own deed', () => {
+    const state = board([{ deed: 'boardwalk', owner: 'P1' }])
+    const { events } = land(state, 32, [3, 4])
+    expect(events.some((e) => e.type === 'RentCharged')).toBe(false)
+  })
+
+  it('routes rent to an active futures holder', () => {
+    const state = board([{ deed: 'boardwalk', owner: 'P2' }], {
+      round: 5,
+      futures: [{ id: 'F1', deed: 'boardwalk', holder: 'P3', startRound: 4, endRound: 9 }],
+    })
+    expect(rentRecipient(state, 'boardwalk')).toBe('P3')
+    const { events } = land(state, 32, [3, 4])
+    expect(events).toContainEqual({
+      type: 'RentCharged', from: 'P1', to: 'P3', deed: 'boardwalk', amount: 50,
+    })
+    expect(events).toContainEqual({
+      type: 'RentRoutedToFuture', contract: 'F1', holder: 'P3', amount: 50,
+    })
+  })
+
+  it('ignores a contract whose window has not started or has ended', () => {
+    const early = board([{ deed: 'boardwalk', owner: 'P2' }], {
+      round: 3,
+      futures: [{ id: 'F1', deed: 'boardwalk', holder: 'P3', startRound: 4, endRound: 9 }],
+    })
+    expect(rentRecipient(early, 'boardwalk')).toBe('P2')
+    const late = { ...early, round: 10 }
+    expect(rentRecipient(late, 'boardwalk')).toBe('P2')
+  })
+
+  it('collects nothing when the futures holder lands on a deed they do not own', () => {
+    const state = board([{ deed: 'boardwalk', owner: 'P2' }], {
+      round: 5,
+      futures: [{ id: 'F1', deed: 'boardwalk', holder: 'P1', startRound: 4, endRound: 9 }],
+    })
+    const { events } = land(state, 32, [3, 4])
+    expect(events.some((e) => e.type === 'RentCharged')).toBe(false)
+  })
+
+  it('makes the payee whole and books the payer shortfall as distressed debt', () => {
+    const base = board([{ deed: 'boardwalk', owner: 'P2' }])
+    const state: GameState = {
+      ...base,
+      players: { ...base.players, P1: { ...base.players.P1, cleanCash: 10 } },
+    }
+    const { seeded, events } = land(state, 32, [3, 4])
+    expect(events).toContainEqual({
+      type: 'DistressedDebtIncurred', player: 'P1', amount: 40,
+    })
+    const after = events.reduce(reduce, seeded)
+    expect(after.players.P1.cleanCash).toBe(0)
+    expect(after.players.P2.cleanCash).toBe(ECONOMY.STARTING_CASH + 50)
+    expect(after.treasury).toBe(-40)
+  })
+})
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run packages/engine/src/contexts/board/rent.test.ts`
+Expected: FAIL — `rentDue` and `rentRecipient` are not exported.
+
+- [ ] **Step 3: Write `contexts/board/rent.ts`**
+
+```ts
+import { GROUP_MEMBERS, RAILROAD_RENT, UTILITY_MULTIPLIER } from '../../config/board.js'
+import type { DeedState, GameState, RentFuture } from '../../core/state.js'
+import type { ColorGroup, DeedId, DiceRoll, Money, PlayerId } from '../../core/types.js'
+import { diceTotal } from './selectors.js'
+
+/** Deeds a bank liquidation removed from play collect nothing. */
+function collectingOwner(deed: DeedState): PlayerId | null {
+  if (deed.owner === null || deed.owner === 'bank') return null
+  if (deed.mortgaged) return null
+  return deed.owner
+}
+
+export function countOwnedInGroup(
+  state: GameState,
+  group: ColorGroup,
+  owner: PlayerId,
+): number {
+  return GROUP_MEMBERS[group].filter((id) => {
+    const deed = state.deeds[id]
+    return deed !== undefined && deed.owner === owner && !deed.mortgaged
+  }).length
+}
+
+/**
+ * Spec section 2: base rent doubles on a full colour group with nothing built.
+ * Any mortgaged or developed member of the group cancels the doubling.
+ */
+export function ownsUndevelopedGroup(
+  state: GameState,
+  group: ColorGroup,
+  owner: PlayerId,
+): boolean {
+  return GROUP_MEMBERS[group].every((id) => {
+    const deed = state.deeds[id]
+    return deed !== undefined
+      && deed.owner === owner
+      && !deed.mortgaged
+      && deed.houses === 0
+  })
+}
+
+export function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money {
+  const deed = state.deeds[deedId]
+  if (deed === undefined) return 0
+  const owner = collectingOwner(deed)
+  if (owner === null) return 0
+
+  if (deed.group === 'railroad') {
+    return RAILROAD_RENT[countOwnedInGroup(state, 'railroad', owner)] ?? 0
+  }
+  if (deed.group === 'utility') {
+    const multiplier = UTILITY_MULTIPLIER[countOwnedInGroup(state, 'utility', owner)] ?? 0
+    return multiplier * diceTotal(dice)
+  }
+  if (deed.houses > 0) {
+    return deed.rentTable[deed.houses] ?? 0
+  }
+  const base = deed.rentTable[0] ?? 0
+  return ownsUndevelopedGroup(state, deed.group, owner) ? base * 2 : base
+}
+
+export function activeFutureOn(state: GameState, deedId: DeedId): RentFuture | null {
+  return state.futures.find(
+    (f) => f.deed === deedId
+      && state.round >= f.startRound
+      && state.round <= f.endRound,
+  ) ?? null
+}
+
+/** Spec section 19.2: the holder if a contract is live, otherwise the owner. */
+export function rentRecipient(state: GameState, deedId: DeedId): PlayerId | null {
+  const deed = state.deeds[deedId]
+  if (deed === undefined) return null
+  const owner = collectingOwner(deed)
+  if (owner === null) return null
+  return activeFutureOn(state, deedId)?.holder ?? owner
+}
+```
+
+- [ ] **Step 4: Replace the deed branch of `resolveLanding` in `decide.ts`**
+
+Add `import { deedAt } from '../../config/board.js'` alongside the existing board
+imports, `import { activeFutureOn, rentDue, rentRecipient } from './rent.js'`,
+and replace `resolveLanding` with:
+
+```ts
+function resolveLanding(
+  state: GameState,
+  player: PlayerId,
+  square: SquareIndex,
+  dice: DiceRoll,
+  ledger: TurnLedger,
+): readonly GameEvent[] {
+  const events: GameEvent[] = []
+  if (square === GO_TO_JAIL_SQUARE) {
+    events.push({ type: 'SentToJail', player, reason: 'square' })
+    return events
+  }
+  if (square === INCOME_TAX_SQUARE) {
+    events.push({ type: 'TaxPaid', player, amount: ECONOMY.INCOME_TAX, kind: 'income' })
+    pushShortfall(events, player, ledger.charge(ECONOMY.INCOME_TAX))
+    return events
+  }
+  if (square === LUXURY_TAX_SQUARE) {
+    events.push({ type: 'TaxPaid', player, amount: ECONOMY.LUXURY_TAX, kind: 'luxury' })
+    pushShortfall(events, player, ledger.charge(ECONOMY.LUXURY_TAX))
+    return events
+  }
+
+  const definition = deedAt(square)
+  if (definition === null) return events
+  const deed = state.deeds[definition.id]
+  // Spec 19.2: the owner owes nothing on their own deed.
+  if (deed === undefined || deed.owner === player) return events
+
+  const amount = rentDue(state, definition.id, dice)
+  if (amount <= 0) return events
+  const recipient = rentRecipient(state, definition.id)
+  // Spec 19.2: a futures holder landing on a deed they do not own pays nobody.
+  if (recipient === null || recipient === player) return events
+
+  events.push({ type: 'RentCharged', from: player, to: recipient, deed: definition.id, amount })
+  const contract = activeFutureOn(state, definition.id)
+  if (contract !== null) {
+    events.push({
+      type: 'RentRoutedToFuture', contract: contract.id, holder: contract.holder, amount,
+    })
+  }
+  pushShortfall(events, player, ledger.charge(amount))
+  return events
+}
+```
+
+- [ ] **Step 5: Re-export rent from the board index**
+
+Add to `packages/engine/src/contexts/board/index.ts`:
+
+```ts
+export * from './rent.js'
+```
+
+- [ ] **Step 6: Run the test to verify it passes**
+
+Run: `npx vitest run packages/engine/src/contexts/board/`
+Expected: PASS — `board.test.ts` and `rent.test.ts` both green. The movement
+tests must still pass unchanged; if they do not, `resolveLanding` has started
+charging rent on a square it should not.
+
+- [ ] **Step 7: Verify the toolchain and commit**
+
+Run: `npm run typecheck && npm run lint && npm test`
+
+```bash
+git add packages/engine/src/contexts/board
+git commit -m "feat(board): rent tables, group doubling, railroads and utilities
+
+Full-group doubling requires every member owned, unmortgaged and
+undeveloped. Railroads pay 25/50/100/200 by unmortgaged count; utilities
+pay 4x or 10x the dice total. Rent routes to an active futures holder
+per spec 19.2, and nobody pays themselves."
+```
+
+---

@@ -901,10 +901,38 @@ Forced liquidation does not occur during Settlement. Positions are marked at Set
 step 10 and resolve at the **start of the next Open phase**, before other actions, as a
 facilitator-run auction among the other three players.
 
-**Liquidation applies only to uncured margin calls.** Any other shortfall a player
-cannot meet — an unpayable rent bill, an audit fine, a tax — becomes distressed debt
-immediately, with no liquidation and no auction. This is what keeps a broke player
-playing rather than stalling the table.
+**Liquidation applies only to uncured margin calls.**
+
+### The obligation waterfall
+
+Every obligation in the game — rent, interest, carrying cost, taxes, audit fines, CDS
+premiums, peer loan interest — resolves through one path:
+
+1. **Clean cash**, to the extent available.
+2. **Any shortfall capitalises into the drawn credit balance**, *without regard to the
+   borrowing base*.
+3. A player is never left unable to pay. There is no third step at this stage.
+
+Step 2 is deliberately uncapped, and it is the only mechanism by which a drawn balance
+comes to exceed a borrowing base. **Voluntary** draws, by contrast, are always capped at
+the base. This distinction is what makes section 19.1 true: an audit fine a player cannot
+cover from clean cash raises their drawn balance, and if that pushes them past their
+base, the margin call flagged at step 10 of the same Settlement is a direct consequence
+of the audit resolved at step 9.
+
+A small unpayable bill therefore does *not* trigger an auction. It capitalises, the
+drawn balance rises slightly, and if the player is still inside their base nothing
+further happens. The liquidation machinery engages only on an actual breach.
+
+### Distressed debt is the terminal state
+
+Distressed debt arises in exactly one circumstance: a margin call went uncured, the
+forced liquidation ran, and it stopped because the player had no unmortgaged deeds
+left. Whatever shortfall remains becomes distressed debt at 15% compounding.
+
+It therefore means something precise — *you are underwater and have nothing left to
+sell* — rather than being a general-purpose bucket for unpaid bills. This is what keeps
+a broke player making decisions rather than stalling the table.
 
 ### 19.9 Ventures on mortgaged deeds
 
