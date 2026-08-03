@@ -2969,3 +2969,1876 @@ card targets rank on."
 ```
 
 ---
+
+### Task 19: `session` context — scoring, mark-to-model, win conditions and the Settlement sequence
+
+Task 19 closes two holes at once. The obvious one is scoring: spec section 12's net worth
+formula and the five mark-to-model rules. The second is that **nobody owns the Settlement
+sequence**. Tasks 9, 10, 12, 13, 14, 15, 16 and 17 each export a generator for one or two
+of spec 19.1's eleven steps, and no task composes them. Ordering is observable — 19.1 says
+so in its first sentence — so the sequence is a rule, and rules belong in a context.
+`session` already owns rounds, phases and eras, so it owns the sequence too.
+
+That decision is what makes the round-24 requirement expressible at all. Spec 19.1's last
+paragraph adds three steps after step 11, in order: all pools terminate, every tranche
+short of face triggers its referencing CDS, then scoring runs. A CDS triggered by
+termination has to land in the final score, and the only way to test that claim is to own
+the composition and assert the event order it produces.
+
+**Files:**
+- Create: `packages/engine/src/contexts/session/marks.ts`
+- Create: `packages/engine/src/contexts/session/scoring.ts`
+- Create: `packages/engine/src/contexts/session/settlement.ts`
+- Modify: `packages/engine/src/config/economy.ts` (three scoring constants)
+- Modify: `packages/engine/src/contexts/session/decide.ts` (one command arm)
+- Modify: `packages/engine/src/contexts/session/index.ts`
+- Test: `packages/engine/src/contexts/session/marks.test.ts`
+- Test: `packages/engine/src/contexts/session/scoring.test.ts`
+- Test: `packages/engine/src/contexts/session/settlement.test.ts`
+- Test: `packages/engine/tests/fixtures/scoring-state.ts` (shared builder, imported by all three)
+
+**File-size plan.** `marks.ts` is five mark functions and the deed/building basis, ~150
+lines. `scoring.ts` is the breakdown, `netWorth`, standings and the win conditions, ~180
+lines. `settlement.ts` is the fourteen-step fold plus its input type, ~190 lines. Nothing
+approaches 500, and the three split on responsibility rather than on length: valuation,
+aggregation, sequencing.
+
+**Interfaces:**
+
+Consumes — all through `index.ts`. These are the signatures the sibling parts actually
+declare, so a rename in any of them is a compile error here rather than a silent drift:
+
+```ts
+// contexts/credit/index.ts  (tasks-09-11.md)
+export function borrowingBase(state: GameState, player: PlayerId): Money
+export function deedsOwnedBy(state: GameState, player: PlayerId): readonly DeedState[]
+export function settleCarryingCost(state: GameState): readonly GameEvent[]
+export function settleCreditInterest(state: GameState): readonly GameEvent[]
+export function settleDistressedDebt(state: GameState): readonly GameEvent[]
+export function flagMarginCalls(state: GameState): readonly GameEvent[]
+
+// contexts/credit/index.ts  (Task 11, ABSENT from the plan set — see JUDGMENT CALLS)
+export function settlePeerLoans(state: GameState): readonly GameEvent[]
+export function activeLoans(state: GameState): readonly PeerLoan[]
+
+// contexts/markets/index.ts  (tasks-14-15.md)
+export function markRentFuture(state: GameState, id: ContractId): Money
+export function markDeedOption(state: GameState, id: ContractId): Money
+export function expireRentFutures(state: GameState): readonly GameEvent[]
+export function lapseDeedOptions(state: GameState): readonly GameEvent[]
+
+// contexts/securitization/index.ts  (tasks-16-17.md)
+export interface Distribution { readonly tranche: Tranche['kind']; readonly amount: Money }
+export function findPool(state: GameState, id: ContractId): Pool | undefined
+export function distribute(pool: Pool, collected: Money): readonly Distribution[]
+export function expectedPoolCashflow(state: GameState, pool: Pool): Money
+export function borrowerLeverage(state: GameState, player: PlayerId): number
+export function settleSecuritization(
+  state: GameState, roundEvents: readonly GameEvent[],
+): readonly GameEvent[]
+export function settleSwapPremiums(state: GameState): readonly GameEvent[]
+export function terminateAllPools(state: GameState): readonly GameEvent[]
+
+// contexts/underworld/index.ts  (tasks-12-13.md)
+export function settleVentures(state: GameState): readonly GameEvent[]
+export function settleAudits(
+  state: GameState, dice: Readonly<Partial<Record<PlayerId, DiceRoll>>>,
+): readonly GameEvent[] | Rejection
+
+// core/money.ts  (Task 2) — the ONLY percentage arithmetic in this task
+export function floorPercent(amount: Money, rate: number): Money
+export function ceilPercent(amount: Money, rate: number): Money
+
+// core/reduce.ts  (tasks-03-08.md)
+export function reduce(state: GameState, event: GameEvent): GameState
+```
+
+Produces:
+
+```ts
+// marks.ts
+export function deedValue(deed: DeedState): Money
+export function buildingCostBasis(deed: DeedState): Money
+export function portfolioValue(state: GameState, player: PlayerId): {
+  readonly deeds: Money; readonly buildings: Money
+}
+export function markRentFuturesHeld(state: GameState, player: PlayerId): Money
+export function markTranche(state: GameState, pool: Pool, kind: Tranche['kind']): Money
+export function markTranchesHeld(state: GameState, player: PlayerId): Money
+export function markLoanNote(state: GameState, loan: PeerLoan): Money
+export function markLoanNotesHeld(state: GameState, player: PlayerId): Money
+export function markDeedOptionsHeld(state: GameState, player: PlayerId): Money
+export function markSwapsHeld(state: GameState, player: PlayerId): Money
+export function instrumentsHeld(state: GameState, player: PlayerId): Money
+
+// scoring.ts
+export interface NetWorthBreakdown {
+  readonly cleanCash: Money
+  readonly deedValue: Money
+  readonly buildingCost: Money
+  readonly instruments: Money
+  readonly drawnCredit: Money
+  readonly peerLoansOwed: Money
+  readonly distressedDebt: Money
+  readonly dirtyCash: Money
+  readonly total: Money
+}
+export function netWorthBreakdown(state: GameState, player: PlayerId): NetWorthBreakdown
+export function netWorth(state: GameState, player: PlayerId): Money
+export function netWorths(state: GameState): Readonly<Record<PlayerId, Money>>
+export interface Standing {
+  readonly player: PlayerId; readonly netWorth: Money; readonly rank: number
+}
+export function standings(state: GameState): readonly Standing[]
+export interface WinProgress {
+  readonly kind: 'fixed-rounds' | 'net-worth-target'
+  readonly netWorth: Money
+  readonly target: Money | null
+  readonly remaining: Money | null
+  readonly achieved: boolean
+}
+export function winProgress(state: GameState, player: PlayerId): WinProgress
+export function targetReachedBy(state: GameState): readonly PlayerId[]
+export function isGameOver(state: GameState): boolean
+export function winner(state: GameState): PlayerId | null
+export function scoreGame(state: GameState): GameEvent
+
+// settlement.ts
+export interface SettlementInput {
+  readonly auditDice: Readonly<Partial<Record<PlayerId, DiceRoll>>>
+  readonly roundEvents: readonly GameEvent[]
+}
+export function runSettlement(
+  state: GameState, input: SettlementInput,
+): readonly GameEvent[] | Rejection
+export function runFinalSettlement(
+  state: GameState, input: SettlementInput,
+): readonly GameEvent[] | Rejection
+export const SETTLEMENT_STEPS: readonly string[]
+
+// decide.ts — SessionCommand gains one arm
+| { readonly kind: 'settle'; readonly input: SettlementInput }
+```
+
+---
+
+- [ ] **Step 1: Add the three scoring constants to `config/economy.ts`**
+
+Every number spec section 12 names goes here, because no economic number may appear
+inline anywhere else. Add inside the `ECONOMY` object:
+
+```ts
+  /**
+   * Loan note mark, spec section 12:
+   *   principal x (1 - LOAN_NOTE_HAIRCUT_PER_TURN x min(leverage, LOAN_NOTE_MAX_LEVERAGE))
+   * A note against an unlevered borrower marks at par; against a borrower at 4x or
+   * worse it marks at 40% of principal.
+   */
+  LOAN_NOTE_HAIRCUT_PER_TURN: 0.15,
+  LOAN_NOTE_MAX_LEVERAGE: 4,
+
+  /** Spec section 10: dirty cash is worth exactly this at final scoring. */
+  DIRTY_CASH_SCORING_VALUE: 0,
+```
+
+`LOAN_NOTE_MAX_LEVERAGE` is 4 while `RATING_MAX_LEVERAGE` is 5. That is not a typo —
+spec section 8 caps leverage at 5 inside the ratings formula and spec section 12 caps it
+at 4 inside the note mark. Two rules, two caps, two constants.
+
+- [ ] **Step 2: Write the shared scoring fixture**
+
+`packages/engine/tests/fixtures/scoring-state.ts`. All three Task 19 test files import
+this builder, so it lives under `tests/fixtures/` rather than inside a `.test.ts`:
+
+```ts
+import type {
+  DeedState, GameConfig, GameState, PeerLoan, PlayerState, Pool, RentFuture,
+  DeedOption, Swap, Tranche,
+} from '../../src/core/state.js'
+import type { DeedId, Money, PlayerId } from '../../src/core/types.js'
+import { PLAYER_IDS } from '../../src/core/types.js'
+import { ECONOMY } from '../../src/config/economy.js'
+
+export const CONFIG: GameConfig = {
+  turnOrder: ['P1', 'P2', 'P3', 'P4'],
+  unlockMode: 'all',
+  winCondition: { kind: 'fixed-rounds' },
+}
+
+export function player(id: PlayerId, patch: Partial<PlayerState> = {}): PlayerState {
+  return {
+    id,
+    cleanCash: 0,
+    dirtyCash: 0,
+    heat: 0,
+    position: 0,
+    inJail: false,
+    consecutiveDoubles: 0,
+    drawnCredit: 0,
+    distressedDebt: 0,
+    creditImpaired: false,
+    ventures: [],
+    marginCallFlaggedAt: null,
+    launderedThisPhase: false,
+    briberyUsedThisRound: false,
+    dirtyActionThisRound: false,
+    insiderRevealedThisRound: false,
+    rerollForced: false,
+    cardCancelled: false,
+    ...patch,
+  }
+}
+
+export function deed(id: DeedId, patch: Partial<DeedState> = {}): DeedState {
+  return {
+    id,
+    square: 1,
+    group: 'orange',
+    faceValue: 200,
+    houseCost: 100,
+    rentTable: [16, 80, 220, 600, 800, 1000],
+    owner: null,
+    mortgaged: false,
+    houses: 0,
+    ...patch,
+  }
+}
+
+export function scoringState(patch: Partial<GameState> = {}): GameState {
+  const players = Object.fromEntries(
+    PLAYER_IDS.map((id) => [id, player(id)]),
+  ) as Record<PlayerId, PlayerState>
+  return {
+    config: CONFIG,
+    phase: 'settlement',
+    round: 24,
+    era: 4,
+    activePlayer: null,
+    players,
+    deeds: {},
+    treasury: 0,
+    housesRemaining: ECONOMY.HOUSE_SUPPLY,
+    hotelsRemaining: ECONOMY.HOTEL_SUPPLY,
+    draft: null,
+    futures: [],
+    options: [],
+    loans: [],
+    pools: [],
+    swaps: [],
+    decks: { 1: EMPTY_DECK, 2: EMPTY_DECK, 3: EMPTY_DECK, 4: EMPTY_DECK },
+    cardEffects: EMPTY_CARD_EFFECTS,
+    ...patch,
+  }
+}
+
+const EMPTY_DECK = { order: [], drawn: 0 }
+
+const EMPTY_CARD_EFFECTS = {
+  modifiers: [],
+  entitlements: [],
+  poolInjections: {},
+  scheduledPoolTerminations: [],
+  counters: {
+    rentReceivedThisGame: { P1: 0, P2: 0, P3: 0, P4: 0 },
+    rentReceivedThisEra: { P1: 0, P2: 0, P3: 0, P4: 0 },
+    dirtyActionsThisGame: { P1: 0, P2: 0, P3: 0, P4: 0 },
+    launderCountThisGame: { P1: 0, P2: 0, P3: 0, P4: 0 },
+  },
+  seq: 0,
+}
+
+export function loan(patch: Partial<PeerLoan> = {}): PeerLoan {
+  return {
+    id: 'l-1', lender: 'P1', borrower: 'P2', principal: 500, outstanding: 500,
+    ratePerRound: 0.1, maturesAtRound: 24, collateral: [], status: 'active', ...patch,
+  }
+}
+
+export function future(patch: Partial<RentFuture> = {}): RentFuture {
+  return { id: 'f-1', deed: 'd-1', holder: 'P1', startRound: 1, endRound: 24, ...patch }
+}
+
+export function option(patch: Partial<DeedOption> = {}): DeedOption {
+  return { id: 'o-1', deed: 'd-1', writer: 'P2', holder: 'P1', strike: 120, expiry: 24, ...patch }
+}
+
+export function tranche(kind: Tranche['kind'], patch: Partial<Tranche> = {}): Tranche {
+  const face = kind === 'senior' ? 600 : kind === 'mezzanine' ? 400 : 0
+  return { kind, face, paid: 0, holder: 'P1', ...patch }
+}
+
+export function pool(patch: Partial<Pool> = {}): Pool {
+  return {
+    id: 'pool-1', originator: 'P1', assets: [],
+    tranches: [tranche('senior'), tranche('mezzanine'), tranche('equity')],
+    terminated: false, ...patch,
+  }
+}
+
+export function swap(patch: Partial<Swap> = {}): Swap {
+  return {
+    id: 's-1', buyer: 'P3', seller: 'P4',
+    reference: { kind: 'tranche', poolId: 'pool-1', tranche: 'mezzanine' },
+    notional: 400, premiumPerRound: 20, status: 'active', ...patch,
+  }
+}
+```
+
+- [ ] **Step 3: Write the failing mark-to-model test**
+
+`packages/engine/src/contexts/session/marks.test.ts`. Every case below is a line of the
+spec section 12 table, and the two mortgage cases are the exploit this task exists to
+close:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ECONOMY } from '../../config/economy.js'
+
+vi.mock('../markets/index.js', () => ({
+  markRentFuture: vi.fn(), markDeedOption: vi.fn(),
+}))
+vi.mock('../securitization/index.js', () => ({
+  distribute: vi.fn(), expectedPoolCashflow: vi.fn(), borrowerLeverage: vi.fn(),
+}))
+
+import { markRentFuture, markDeedOption } from '../markets/index.js'
+import { distribute, expectedPoolCashflow, borrowerLeverage } from '../securitization/index.js'
+import {
+  buildingCostBasis, deedValue, markDeedOptionsHeld, markLoanNote, markLoanNotesHeld,
+  markRentFuturesHeld, markSwapsHeld, markTranche, markTranchesHeld,
+} from './marks.js'
+import {
+  deed, future, loan, option, pool, scoringState, swap, tranche,
+} from '../../../tests/fixtures/scoring-state.js'
+
+beforeEach(() => {
+  vi.mocked(markRentFuture).mockReturnValue(0)
+  vi.mocked(markDeedOption).mockReturnValue(0)
+  vi.mocked(borrowerLeverage).mockReturnValue(0)
+  vi.mocked(expectedPoolCashflow).mockReturnValue(0)
+  vi.mocked(distribute).mockReturnValue([])
+})
+
+describe('deedValue', () => {
+  it('marks an unmortgaged deed at face', () => {
+    expect(deedValue(deed('d-1', { faceValue: 200 }))).toBe(200)
+  })
+
+  it('marks a mortgaged deed net of the cost to redeem it', () => {
+    // Mortgaging pays 50% of face in cash. If the deed still marked at face, a player
+    // could mortgage all seven holdings on the last Open phase and gain 50% of their
+    // face value for free. Netting the 55% redemption cost makes it cost 5% instead.
+    expect(deedValue(deed('d-1', { faceValue: 200, mortgaged: true }))).toBe(90)
+  })
+
+  it('never marks a mortgaged deed below zero', () => {
+    expect(deedValue(deed('d-1', { faceValue: 1, mortgaged: true }))).toBe(0)
+  })
+})
+
+describe('buildingCostBasis', () => {
+  it('values buildings at the price actually paid, not the list price', () => {
+    // Houses cost 90% of list. Valuing at list would make building instantly
+    // net-worth-accretive by 11%, which is a free money pump.
+    expect(buildingCostBasis(deed('d-1', { houseCost: 100, houses: 3 }))).toBe(270)
+  })
+
+  it('counts a hotel as five buildings', () => {
+    expect(buildingCostBasis(deed('d-1', { houseCost: 100, houses: 5 }))).toBe(450)
+  })
+})
+
+describe('markLoanNote', () => {
+  it('marks a note against an unlevered borrower at par', () => {
+    const s = scoringState()
+    vi.mocked(borrowerLeverage).mockReturnValue(0)
+    expect(markLoanNote(s, loan({ outstanding: 500 }))).toBe(500)
+  })
+
+  it('marks a note against a 4x borrower at 40% of principal', () => {
+    const s = scoringState()
+    vi.mocked(borrowerLeverage).mockReturnValue(4)
+    expect(markLoanNote(s, loan({ outstanding: 500 }))).toBe(200)
+  })
+
+  it('caps the haircut at 4x, so a 9x borrower marks the same as a 4x one', () => {
+    const s = scoringState()
+    vi.mocked(borrowerLeverage).mockReturnValue(9)
+    expect(markLoanNote(s, loan({ outstanding: 500 }))).toBe(200)
+  })
+
+  it('marks a repaid or defaulted note at zero', () => {
+    const s = scoringState()
+    expect(markLoanNote(s, loan({ status: 'repaid' }))).toBe(0)
+    expect(markLoanNote(s, loan({ status: 'defaulted' }))).toBe(0)
+  })
+
+  it('sums only the notes the player lent against', () => {
+    const s = scoringState({
+      loans: [
+        loan({ id: 'l-1', lender: 'P1', outstanding: 500 }),
+        loan({ id: 'l-2', lender: 'P2', outstanding: 300 }),
+      ],
+    })
+    vi.mocked(borrowerLeverage).mockReturnValue(0)
+    expect(markLoanNotesHeld(s, 'P1')).toBe(500)
+    expect(markLoanNotesHeld(s, 'P2')).toBe(300)
+  })
+})
+
+describe('markTranche', () => {
+  it('runs the pool\'s own waterfall over the cashflow it has not yet collected', () => {
+    const s = scoringState()
+    const p = pool({
+      tranches: [
+        tranche('senior', { face: 600, paid: 600, holder: 'P1' }),
+        tranche('mezzanine', { face: 400, paid: 100, holder: 'P2' }),
+        tranche('equity', { face: 0, paid: 0, holder: 'P3' }),
+      ],
+    })
+    vi.mocked(expectedPoolCashflow).mockReturnValue(1000)
+    vi.mocked(distribute).mockReturnValue([
+      { tranche: 'senior', amount: 0 },
+      { tranche: 'mezzanine', amount: 300 },
+      { tranche: 'equity', amount: 0 },
+    ])
+    expect(markTranche(s, p, 'mezzanine')).toBe(300)
+    // 1000 expected, 700 already paid out, so 300 remains to run the waterfall.
+    expect(vi.mocked(distribute)).toHaveBeenCalledWith(p, 300)
+  })
+
+  it('marks every tranche of a terminated pool at zero', () => {
+    const s = scoringState()
+    const p = pool({ terminated: true })
+    expect(markTranche(s, p, 'senior')).toBe(0)
+    expect(vi.mocked(distribute)).not.toHaveBeenCalled()
+  })
+
+  it('sums the tranches a player holds across every live pool', () => {
+    const s = scoringState({
+      pools: [
+        pool({ id: 'pool-1', tranches: [tranche('senior', { holder: 'P1' })] }),
+        pool({ id: 'pool-2', tranches: [tranche('senior', { holder: 'P1' })] }),
+      ],
+    })
+    vi.mocked(expectedPoolCashflow).mockReturnValue(1000)
+    vi.mocked(distribute).mockReturnValue([{ tranche: 'senior', amount: 250 }])
+    expect(markTranchesHeld(s, 'P1')).toBe(500)
+  })
+})
+
+describe('markRentFuturesHeld and markDeedOptionsHeld', () => {
+  it('delegates rent futures to the markets valuation', () => {
+    const s = scoringState({ futures: [future({ id: 'f-1', holder: 'P1' })] })
+    vi.mocked(markRentFuture).mockReturnValue(140)
+    expect(markRentFuturesHeld(s, 'P1')).toBe(140)
+    expect(markRentFuturesHeld(s, 'P2')).toBe(0)
+  })
+
+  it('delegates deed options to the markets mark, which is max(0, face - strike)', () => {
+    const s = scoringState({ options: [option({ id: 'o-1', holder: 'P1' })] })
+    vi.mocked(markDeedOption).mockReturnValue(80)
+    expect(markDeedOptionsHeld(s, 'P1')).toBe(80)
+  })
+
+  it('gives the option writer nothing, positive or negative', () => {
+    const s = scoringState({ options: [option({ writer: 'P2', holder: 'P1' })] })
+    vi.mocked(markDeedOption).mockReturnValue(80)
+    expect(markDeedOptionsHeld(s, 'P2')).toBe(0)
+  })
+})
+
+describe('markSwapsHeld', () => {
+  it('marks both sides of an untriggered swap at zero', () => {
+    const s = scoringState({ swaps: [swap({ buyer: 'P3', seller: 'P4', status: 'active' })] })
+    expect(markSwapsHeld(s, 'P3')).toBe(0)
+    expect(markSwapsHeld(s, 'P4')).toBe(0)
+  })
+
+  it('marks a triggered swap at zero too, because the payout already moved in cash', () => {
+    const s = scoringState({ swaps: [swap({ status: 'triggered' })] })
+    expect(markSwapsHeld(s, 'P3')).toBe(0)
+    expect(markSwapsHeld(s, 'P4')).toBe(0)
+  })
+})
+```
+
+- [ ] **Step 4: Run the mark test and watch it fail**
+
+Run: `npx vitest run packages/engine/src/contexts/session/marks.test.ts`
+Expected: FAIL — `./marks.js` does not exist.
+
+- [ ] **Step 5: Implement `marks.ts`**
+
+`packages/engine/src/contexts/session/marks.ts`:
+
+```ts
+import type { DeedState, GameState, PeerLoan, Pool, Tranche } from '../../core/state.js'
+import type { Money, PlayerId } from '../../core/types.js'
+import { ceilPercent, floorPercent } from '../../core/money.js'
+import { ECONOMY } from '../../config/economy.js'
+import { markDeedOption, markRentFuture } from '../markets/index.js'
+import { borrowerLeverage, distribute, expectedPoolCashflow } from '../securitization/index.js'
+
+/**
+ * Spec section 12 lists deeds at face value with no mortgage line. Taken literally that
+ * is a free 50%-of-face gain for mortgaging on the last Open phase, so a mortgaged deed
+ * marks net of what it costs to redeem: face - ceil(face x UNMORTGAGE_RATE), floored at
+ * zero. Mortgaging is then mildly value-destroying, which is the intended economics.
+ */
+export function deedValue(deed: DeedState): Money {
+  if (!deed.mortgaged) return deed.faceValue
+  return Math.max(0, deed.faceValue - ceilPercent(deed.faceValue, ECONOMY.UNMORTGAGE_RATE))
+}
+
+/**
+ * Buildings mark at the price actually paid — houses cost HOUSE_COST_MULTIPLIER of the
+ * deed's list price. `houses` is 0-4, or 5 for a hotel, so a hotel is five buildings.
+ */
+export function buildingCostBasis(deed: DeedState): Money {
+  return floorPercent(deed.houseCost, ECONOMY.HOUSE_COST_MULTIPLIER) * deed.houses
+}
+
+export function portfolioValue(
+  state: GameState, player: PlayerId,
+): { readonly deeds: Money; readonly buildings: Money } {
+  return Object.values(state.deeds)
+    .filter((d) => d.owner === player)
+    .reduce(
+      (acc, d) => ({
+        deeds: acc.deeds + deedValue(d),
+        buildings: acc.buildings + buildingCostBasis(d),
+      }),
+      { deeds: 0, buildings: 0 },
+    )
+}
+
+export function markRentFuturesHeld(state: GameState, player: PlayerId): Money {
+  return state.futures
+    .filter((f) => f.holder === player)
+    .reduce((t, f) => t + markRentFuture(state, f.id), 0)
+}
+
+export function markDeedOptionsHeld(state: GameState, player: PlayerId): Money {
+  return state.options
+    .filter((o) => o.holder === player)
+    .reduce((t, o) => t + markDeedOption(state, o.id), 0)
+}
+
+/**
+ * "Expected remaining cashflow through the waterfall" — literally that. Whatever the
+ * pool still expects to collect is run through the pool's own `distribute`, so the
+ * mark can never disagree with what the waterfall would actually pay.
+ */
+export function markTranche(state: GameState, pool: Pool, kind: Tranche['kind']): Money {
+  if (pool.terminated) return 0
+  const paid = pool.tranches.reduce((t, tr) => t + tr.paid, 0)
+  const remaining = Math.max(0, expectedPoolCashflow(state, pool) - paid)
+  if (remaining === 0) return 0
+  return distribute(pool, remaining).find((d) => d.tranche === kind)?.amount ?? 0
+}
+
+export function markTranchesHeld(state: GameState, player: PlayerId): Money {
+  return state.pools.reduce(
+    (total, pool) =>
+      total
+      + pool.tranches
+        .filter((t) => t.holder === player)
+        .reduce((t, tr) => t + markTranche(state, pool, tr.kind), 0),
+    0,
+  )
+}
+
+/**
+ * Spec section 12: `principal x (1 - 0.15 x min(borrowerLeverage, 4))`. The haircut
+ * rounds UP, against the note holder, so the mark is the conservative one.
+ * `borrowerLeverage` already caps at RATING_MAX_LEVERAGE (5); capping again at
+ * LOAN_NOTE_MAX_LEVERAGE (4) is exact because min(min(x,5),4) === min(x,4).
+ */
+export function markLoanNote(state: GameState, loan: PeerLoan): Money {
+  if (loan.status !== 'active') return 0
+  const leverage = Math.min(
+    borrowerLeverage(state, loan.borrower), ECONOMY.LOAN_NOTE_MAX_LEVERAGE,
+  )
+  const haircut = ceilPercent(loan.outstanding, ECONOMY.LOAN_NOTE_HAIRCUT_PER_TURN * leverage)
+  return Math.max(0, loan.outstanding - haircut)
+}
+
+export function markLoanNotesHeld(state: GameState, player: PlayerId): Money {
+  return state.loans
+    .filter((l) => l.lender === player)
+    .reduce((t, l) => t + markLoanNote(state, l), 0)
+}
+
+/**
+ * Both sides of every swap mark at zero. Untriggered is spec section 12 verbatim —
+ * the writer's exposure shows up as the 30% collateral against their borrowing base,
+ * not in net worth. Triggered is zero because `SwapTriggered` moves the notional in
+ * cash at the moment it fires, so the loss is already in the writer's clean cash or,
+ * if they could not cover it, in their drawn credit. Marking it again would count it
+ * twice. Step 21's test pins that to exactly once.
+ */
+export function markSwapsHeld(_state: GameState, _player: PlayerId): Money {
+  return 0
+}
+
+export function instrumentsHeld(state: GameState, player: PlayerId): Money {
+  return markRentFuturesHeld(state, player)
+    + markTranchesHeld(state, player)
+    + markLoanNotesHeld(state, player)
+    + markDeedOptionsHeld(state, player)
+    + markSwapsHeld(state, player)
+}
+```
+
+- [ ] **Step 6: Run the mark test and watch it pass**
+
+Run: `npx vitest run packages/engine/src/contexts/session/marks.test.ts`
+Expected: PASS — all sixteen cases green.
+
+- [ ] **Step 7: Commit the marks**
+
+```bash
+git add packages/engine/src/contexts/session/marks.ts \
+        packages/engine/src/contexts/session/marks.test.ts \
+        packages/engine/tests/fixtures/scoring-state.ts \
+        packages/engine/src/config/economy.ts
+git commit -m "feat(session): mark every instrument to model per spec section 12
+
+Tranches are marked by running the pool's own distribute() over the
+cashflow it has not yet collected, so a mark can never disagree with the
+waterfall. Mortgaged deeds mark net of redemption cost, closing a
+last-round exploit worth 50% of face."
+```
+
+- [ ] **Step 8: Write the failing net-worth test**
+
+`packages/engine/src/contexts/session/scoring.test.ts`:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('../markets/index.js', () => ({
+  markRentFuture: vi.fn(), markDeedOption: vi.fn(),
+}))
+vi.mock('../securitization/index.js', () => ({
+  distribute: vi.fn(), expectedPoolCashflow: vi.fn(), borrowerLeverage: vi.fn(),
+}))
+
+import { markDeedOption, markRentFuture } from '../markets/index.js'
+import { borrowerLeverage, distribute, expectedPoolCashflow } from '../securitization/index.js'
+import { netWorth, netWorthBreakdown, netWorths, scoreGame, standings } from './scoring.js'
+import { deed, future, loan, player, scoringState } from '../../../tests/fixtures/scoring-state.js'
+
+beforeEach(() => {
+  vi.mocked(markRentFuture).mockReturnValue(0)
+  vi.mocked(markDeedOption).mockReturnValue(0)
+  vi.mocked(borrowerLeverage).mockReturnValue(0)
+  vi.mocked(expectedPoolCashflow).mockReturnValue(0)
+  vi.mocked(distribute).mockReturnValue([])
+})
+
+describe('netWorth', () => {
+  it('adds clean cash, deed face, building cost and marks; subtracts every liability', () => {
+    const s = scoringState({
+      players: {
+        ...scoringState().players,
+        P1: player('P1', {
+          cleanCash: 400, dirtyCash: 9_999, drawnCredit: 300, distressedDebt: 120,
+        }),
+      },
+      deeds: {
+        'd-1': deed('d-1', { owner: 'P1', faceValue: 200, houseCost: 100, houses: 2 }),
+        'd-2': deed('d-2', { owner: 'P1', faceValue: 160, mortgaged: true }),
+        'd-3': deed('d-3', { owner: 'P2', faceValue: 500 }),
+      },
+      futures: [future({ id: 'f-1', holder: 'P1' })],
+      loans: [
+        loan({ id: 'l-1', lender: 'P3', borrower: 'P1', outstanding: 250 }),
+        loan({ id: 'l-2', lender: 'P1', borrower: 'P4', outstanding: 100 }),
+      ],
+    })
+    vi.mocked(markRentFuture).mockReturnValue(75)
+
+    const b = netWorthBreakdown(s, 'P1')
+    expect(b.cleanCash).toBe(400)
+    expect(b.deedValue).toBe(200 + 72)        // 160 - ceil(160 x 0.55) = 160 - 88
+    expect(b.buildingCost).toBe(180)          // 2 x floor(100 x 0.9)
+    expect(b.instruments).toBe(75 + 100)      // rent future mark + note lent at par
+    expect(b.drawnCredit).toBe(300)
+    expect(b.peerLoansOwed).toBe(250)
+    expect(b.distressedDebt).toBe(120)
+    expect(b.dirtyCash).toBe(0)               // dirty cash x 0
+    expect(b.total).toBe(400 + 272 + 180 + 175 - 300 - 250 - 120)
+    expect(netWorth(s, 'P1')).toBe(b.total)
+  })
+
+  it('counts dirty cash as exactly zero however large it is', () => {
+    const base = scoringState()
+    const rich = scoringState({
+      players: { ...base.players, P1: player('P1', { dirtyCash: 50_000 }) },
+    })
+    expect(netWorth(rich, 'P1')).toBe(netWorth(base, 'P1'))
+  })
+
+  it('goes negative for a player carrying distressed debt and nothing else', () => {
+    const s = scoringState({
+      players: { ...scoringState().players, P1: player('P1', { distressedDebt: 900 }) },
+    })
+    expect(netWorth(s, 'P1')).toBe(-900)
+  })
+
+  it('excludes deeds the bank took at liquidation from every player', () => {
+    const s = scoringState({ deeds: { 'd-1': deed('d-1', { owner: 'bank', faceValue: 400 }) } })
+    expect(netWorths(s)).toEqual({ P1: 0, P2: 0, P3: 0, P4: 0 })
+  })
+
+  it('nets to the same total when a peer loan is scored from both sides', () => {
+    // The lender's note marks at par against an unlevered borrower, and the borrower
+    // owes exactly the outstanding, so a peer loan is table-neutral at scoring.
+    const s = scoringState({ loans: [loan({ lender: 'P1', borrower: 'P2', outstanding: 400 })] })
+    expect(netWorth(s, 'P1') + netWorth(s, 'P2')).toBe(0)
+  })
+})
+
+describe('standings', () => {
+  it('ranks by net worth descending and breaks ties by turn order', () => {
+    const s = scoringState({
+      players: {
+        P1: player('P1', { cleanCash: 100 }),
+        P2: player('P2', { cleanCash: 300 }),
+        P3: player('P3', { cleanCash: 100 }),
+        P4: player('P4', { cleanCash: 50 }),
+      },
+    })
+    expect(standings(s)).toEqual([
+      { player: 'P2', netWorth: 300, rank: 1 },
+      { player: 'P1', netWorth: 100, rank: 2 },
+      { player: 'P3', netWorth: 100, rank: 2 },
+      { player: 'P4', netWorth: 50, rank: 4 },
+    ])
+  })
+})
+
+describe('scoreGame', () => {
+  it('emits one GameScored carrying every player\'s net worth', () => {
+    const s = scoringState({
+      players: { ...scoringState().players, P2: player('P2', { cleanCash: 700 }) },
+    })
+    expect(scoreGame(s)).toEqual({
+      type: 'GameScored', netWorths: { P1: 0, P2: 700, P3: 0, P4: 0 },
+    })
+  })
+})
+```
+
+- [ ] **Step 9: Run the net-worth test and watch it fail**
+
+Run: `npx vitest run packages/engine/src/contexts/session/scoring.test.ts`
+Expected: FAIL — `./scoring.js` does not exist.
+
+- [ ] **Step 10: Implement the net worth half of `scoring.ts`**
+
+`packages/engine/src/contexts/session/scoring.ts` (part one — the win conditions arrive
+in Step 13):
+
+```ts
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+import type { Money, PlayerId } from '../../core/types.js'
+import { PLAYER_IDS } from '../../core/types.js'
+import { ECONOMY } from '../../config/economy.js'
+import { instrumentsHeld, portfolioValue } from './marks.js'
+
+export interface NetWorthBreakdown {
+  readonly cleanCash: Money
+  readonly deedValue: Money
+  readonly buildingCost: Money
+  readonly instruments: Money
+  readonly drawnCredit: Money
+  readonly peerLoansOwed: Money
+  readonly distressedDebt: Money
+  /** Always 0. Carried so the player-facing panel can show the line and the zero. */
+  readonly dirtyCash: Money
+  readonly total: Money
+}
+
+/**
+ * Spec section 12. There is no term for CDS written and triggered: `SwapTriggered`
+ * moves the notional in cash when it fires, so the writer's loss is already in their
+ * clean cash — or, if they could not cover it, in their drawn credit via the
+ * obligation waterfall. A separate deduction would count the same loss twice.
+ */
+export function netWorthBreakdown(state: GameState, player: PlayerId): NetWorthBreakdown {
+  const p = state.players[player]
+  const { deeds, buildings } = portfolioValue(state, player)
+  const instruments = instrumentsHeld(state, player)
+  const peerLoansOwed = state.loans
+    .filter((l) => l.borrower === player && l.status === 'active')
+    .reduce((t, l) => t + l.outstanding, 0)
+  const dirtyCash = p.dirtyCash * ECONOMY.DIRTY_CASH_SCORING_VALUE
+
+  return {
+    cleanCash: p.cleanCash,
+    deedValue: deeds,
+    buildingCost: buildings,
+    instruments,
+    drawnCredit: p.drawnCredit,
+    peerLoansOwed,
+    distressedDebt: p.distressedDebt,
+    dirtyCash,
+    total:
+      p.cleanCash + deeds + buildings + instruments + dirtyCash
+      - p.drawnCredit - peerLoansOwed - p.distressedDebt,
+  }
+}
+
+export function netWorth(state: GameState, player: PlayerId): Money {
+  return netWorthBreakdown(state, player).total
+}
+
+export function netWorths(state: GameState): Readonly<Record<PlayerId, Money>> {
+  return Object.fromEntries(
+    PLAYER_IDS.map((p) => [p, netWorth(state, p)]),
+  ) as Record<PlayerId, Money>
+}
+
+export interface Standing {
+  readonly player: PlayerId
+  readonly netWorth: Money
+  readonly rank: number
+}
+
+/**
+ * Descending net worth, ties broken by turn order for a stable display order but
+ * sharing a rank, because spec section 12 names no tie-break for the win itself.
+ */
+export function standings(state: GameState): readonly Standing[] {
+  const order = new Map(state.config.turnOrder.map((p, i) => [p, i]))
+  const scored = state.config.turnOrder
+    .map((player) => ({ player, netWorth: netWorth(state, player) }))
+    .sort((a, b) =>
+      b.netWorth - a.netWorth || (order.get(a.player) ?? 0) - (order.get(b.player) ?? 0))
+
+  let rank = 0
+  let previous: Money | null = null
+  return scored.map((row, index) => {
+    if (previous === null || row.netWorth !== previous) rank = index + 1
+    previous = row.netWorth
+    return { ...row, rank }
+  })
+}
+
+export function scoreGame(state: GameState): GameEvent {
+  return { type: 'GameScored', netWorths: netWorths(state) }
+}
+```
+
+- [ ] **Step 11: Run the net-worth test and watch it pass**
+
+Run: `npx vitest run packages/engine/src/contexts/session/scoring.test.ts`
+Expected: PASS.
+
+- [ ] **Step 12: Write the failing win-condition test**
+
+Append to `packages/engine/src/contexts/session/scoring.test.ts`:
+
+```ts
+import { isGameOver, targetReachedBy, winner, winProgress } from './scoring.js'
+import { CONFIG } from '../../../tests/fixtures/scoring-state.js'
+
+const withTarget = (target: number) => ({
+  ...CONFIG, winCondition: { kind: 'net-worth-target' as const, target },
+})
+
+describe('win conditions', () => {
+  it('reports no target and never-achieved progress under fixed-rounds', () => {
+    const s = scoringState({
+      players: { ...scoringState().players, P1: player('P1', { cleanCash: 9_000 }) },
+    })
+    expect(winProgress(s, 'P1')).toEqual({
+      kind: 'fixed-rounds', netWorth: 9_000, target: null, remaining: null, achieved: false,
+    })
+  })
+
+  it('tracks the shortfall to a configured target', () => {
+    const s = scoringState({
+      config: withTarget(5_000),
+      players: { ...scoringState().players, P1: player('P1', { cleanCash: 3_200 }) },
+    })
+    expect(winProgress(s, 'P1')).toEqual({
+      kind: 'net-worth-target', netWorth: 3_200, target: 5_000, remaining: 1_800, achieved: false,
+    })
+  })
+
+  it('clamps remaining at zero once the target is met', () => {
+    const s = scoringState({
+      config: withTarget(5_000),
+      players: { ...scoringState().players, P1: player('P1', { cleanCash: 6_000 }) },
+    })
+    expect(winProgress(s, 'P1').remaining).toBe(0)
+    expect(winProgress(s, 'P1').achieved).toBe(true)
+    expect(targetReachedBy(s)).toEqual(['P1'])
+  })
+
+  it('ends a fixed-rounds game only after round 24 has been settled', () => {
+    expect(isGameOver(scoringState({ round: 23, phase: 'settlement' }))).toBe(false)
+    expect(isGameOver(scoringState({ round: 24, phase: 'settlement' }))).toBe(false)
+    expect(isGameOver(scoringState({ round: 24, phase: 'scoring' }))).toBe(true)
+    expect(isGameOver(scoringState({ round: 24, phase: 'complete' }))).toBe(true)
+  })
+
+  it('ends a target game the moment any player is at or above the target', () => {
+    const s = scoringState({
+      config: withTarget(1_000), round: 5, phase: 'open',
+      players: { ...scoringState().players, P3: player('P3', { cleanCash: 1_000 }) },
+    })
+    expect(isGameOver(s)).toBe(true)
+    expect(winner(s)).toBe('P3')
+  })
+
+  it('awards a tied target race to the earlier player in turn order', () => {
+    const s = scoringState({
+      config: { ...withTarget(1_000), turnOrder: ['P4', 'P3', 'P2', 'P1'] },
+      round: 5, phase: 'open',
+      players: {
+        ...scoringState().players,
+        P1: player('P1', { cleanCash: 1_200 }),
+        P3: player('P3', { cleanCash: 1_200 }),
+      },
+    })
+    expect(winner(s)).toBe('P3')
+  })
+
+  it('has no winner while a fixed-rounds game is still running', () => {
+    expect(winner(scoringState({ round: 12, phase: 'open' }))).toBeNull()
+  })
+})
+```
+
+- [ ] **Step 13: Implement the win conditions**
+
+Append to `packages/engine/src/contexts/session/scoring.ts`:
+
+```ts
+export interface WinProgress {
+  readonly kind: 'fixed-rounds' | 'net-worth-target'
+  readonly netWorth: Money
+  /** null under fixed-rounds, where there is nothing to progress toward. */
+  readonly target: Money | null
+  readonly remaining: Money | null
+  readonly achieved: boolean
+}
+
+export function winProgress(state: GameState, player: PlayerId): WinProgress {
+  const current = netWorth(state, player)
+  const condition = state.config.winCondition
+  if (condition.kind === 'fixed-rounds') {
+    return {
+      kind: 'fixed-rounds', netWorth: current, target: null, remaining: null, achieved: false,
+    }
+  }
+  return {
+    kind: 'net-worth-target',
+    netWorth: current,
+    target: condition.target,
+    remaining: Math.max(0, condition.target - current),
+    achieved: current >= condition.target,
+  }
+}
+
+export function targetReachedBy(state: GameState): readonly PlayerId[] {
+  return state.config.turnOrder.filter((p) => winProgress(state, p).achieved)
+}
+
+/**
+ * Fixed-rounds games end when the scoring phase is reached, not when round 24 begins —
+ * spec 19.1 adds three Settlement steps after round 24's step 11, and all three run
+ * while the phase is still `settlement`.
+ */
+export function isGameOver(state: GameState): boolean {
+  if (state.phase === 'scoring' || state.phase === 'complete') return true
+  return state.config.winCondition.kind === 'net-worth-target'
+    && targetReachedBy(state).length > 0
+}
+
+export function winner(state: GameState): PlayerId | null {
+  if (!isGameOver(state)) return null
+  if (state.config.winCondition.kind === 'net-worth-target') {
+    const reached = targetReachedBy(state)
+    if (reached.length === 0) return null
+    const best = reached.reduce<Money>((m, p) => Math.max(m, netWorth(state, p)), -Infinity)
+    return reached.find((p) => netWorth(state, p) === best) ?? null
+  }
+  return standings(state)[0]?.player ?? null
+}
+```
+
+`targetReachedBy` walks `config.turnOrder`, and `winner` picks the first player in that
+order holding the best score, so a tied target race resolves to the earlier player in
+turn order without a second sort.
+
+- [ ] **Step 14: Run the win-condition test and commit scoring**
+
+Run: `npx vitest run packages/engine/src/contexts/session/scoring.test.ts`
+Expected: PASS — all fourteen cases green.
+
+```bash
+git add packages/engine/src/contexts/session/scoring.ts \
+        packages/engine/src/contexts/session/scoring.test.ts
+git commit -m "feat(session): net worth, standings and both win conditions
+
+Net worth carries no term for CDS written and triggered: SwapTriggered
+moves the notional in cash when it fires, so deducting the notional again
+at scoring would count the same loss twice. Step 21's test pins it to
+exactly once."
+```
+
+- [ ] **Step 15: Write the failing Settlement-order test**
+
+`packages/engine/src/contexts/session/settlement.test.ts`. Spec 19.1 opens by saying the
+order is observable, so the order is the rule and this test is the rule's statement:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { GameEvent } from '../../core/events.js'
+
+vi.mock('../markets/index.js', () => ({
+  expireRentFutures: vi.fn(), lapseDeedOptions: vi.fn(),
+  markRentFuture: vi.fn(), markDeedOption: vi.fn(),
+}))
+vi.mock('../underworld/index.js', () => ({
+  settleVentures: vi.fn(), settleAudits: vi.fn(),
+}))
+vi.mock('../credit/index.js', () => ({
+  settleCarryingCost: vi.fn(), settleCreditInterest: vi.fn(), settlePeerLoans: vi.fn(),
+  settleDistressedDebt: vi.fn(), flagMarginCalls: vi.fn(),
+}))
+vi.mock('../securitization/index.js', () => ({
+  settleSecuritization: vi.fn(), settleSwapPremiums: vi.fn(), terminateAllPools: vi.fn(),
+  distribute: vi.fn(), expectedPoolCashflow: vi.fn(), borrowerLeverage: vi.fn(),
+}))
+
+import { expireRentFutures, lapseDeedOptions, markDeedOption, markRentFuture }
+  from '../markets/index.js'
+import { settleAudits, settleVentures } from '../underworld/index.js'
+import {
+  flagMarginCalls, settleCarryingCost, settleCreditInterest, settleDistressedDebt,
+  settlePeerLoans,
+} from '../credit/index.js'
+import {
+  borrowerLeverage, distribute, expectedPoolCashflow, settleSecuritization,
+  settleSwapPremiums, terminateAllPools,
+} from '../securitization/index.js'
+import { isRejection, reject } from '../../core/errors.js'
+import { SETTLEMENT_STEPS, runFinalSettlement, runSettlement } from './settlement.js'
+import { player, scoringState } from '../../../tests/fixtures/scoring-state.js'
+
+const NO_INPUT = { auditDice: {}, roundEvents: [] as readonly GameEvent[] }
+
+const tag = (name: string): readonly GameEvent[] =>
+  [{ type: 'HeatChanged', player: 'P1', delta: 0, reason: name }]
+
+beforeEach(() => {
+  vi.mocked(markRentFuture).mockReturnValue(0)
+  vi.mocked(markDeedOption).mockReturnValue(0)
+  vi.mocked(borrowerLeverage).mockReturnValue(0)
+  vi.mocked(expectedPoolCashflow).mockReturnValue(0)
+  vi.mocked(distribute).mockReturnValue([])
+  vi.mocked(expireRentFutures).mockReturnValue(tag('1-futures-expire'))
+  vi.mocked(settleVentures).mockReturnValue(tag('2-ventures'))
+  vi.mocked(settleCarryingCost).mockReturnValue(tag('3-carrying-cost'))
+  vi.mocked(settleCreditInterest).mockReturnValue(tag('4-credit-interest'))
+  vi.mocked(settlePeerLoans).mockReturnValue(tag('5-peer-loans'))
+  vi.mocked(settleSecuritization).mockReturnValue(tag('6-waterfalls'))
+  vi.mocked(settleSwapPremiums).mockReturnValue(tag('7-cds-premiums'))
+  vi.mocked(settleDistressedDebt).mockReturnValue(tag('8-distressed-debt'))
+  vi.mocked(settleAudits).mockReturnValue(tag('9-audits'))
+  vi.mocked(flagMarginCalls).mockReturnValue(tag('10-margin-calls'))
+  vi.mocked(lapseDeedOptions).mockReturnValue(tag('11-options-lapse'))
+  vi.mocked(terminateAllPools).mockReturnValue([])
+})
+
+const reasons = (events: readonly GameEvent[]): readonly string[] =>
+  events.flatMap((e) => (e.type === 'HeatChanged' ? [e.reason] : []))
+
+describe('runSettlement', () => {
+  it('runs spec 19.1 steps 1 to 11 in exactly that order', () => {
+    const out = runSettlement(scoringState({ round: 12 }), NO_INPUT)
+    expect(isRejection(out)).toBe(false)
+    expect(reasons(out as readonly GameEvent[])).toEqual([
+      '1-futures-expire', '2-ventures', '3-carrying-cost', '4-credit-interest',
+      '5-peer-loans', '6-waterfalls', '7-cds-premiums', '8-distressed-debt',
+      '9-audits', '10-margin-calls', '11-options-lapse',
+    ])
+    expect(SETTLEMENT_STEPS).toHaveLength(11)
+  })
+
+  it('feeds each step the state left by every step before it', () => {
+    // The audit fine at step 9 must be visible to margin flagging at step 10, which is
+    // the single interaction spec 19.1 calls out by name.
+    vi.mocked(settleAudits).mockReturnValue([
+      { type: 'AuditResolved', player: 'P1', seized: 0, fine: 400,
+        paidFromCash: 0, capitalised: 400 },
+    ])
+    vi.mocked(flagMarginCalls).mockImplementation((s) =>
+      s.players.P1.drawnCredit >= 400 ? tag('flagged') : tag('not-flagged'))
+
+    const out = runSettlement(scoringState({ round: 20 }), NO_INPUT) as readonly GameEvent[]
+    expect(reasons(out)).toContain('flagged')
+  })
+
+  it('passes the round\'s events to the waterfall step and the dice to the audit step', () => {
+    const roundEvents: readonly GameEvent[] = [
+      { type: 'RentCharged', from: 'P2', to: 'P1', deed: 'd-1', amount: 40 },
+    ]
+    const auditDice = { P1: [2, 3] as const }
+    runSettlement(scoringState({ round: 20 }), { auditDice, roundEvents })
+    expect(vi.mocked(settleSecuritization)).toHaveBeenCalledWith(expect.anything(), roundEvents)
+    expect(vi.mocked(settleAudits)).toHaveBeenCalledWith(expect.anything(), auditDice)
+  })
+
+  it('aborts the whole Settlement on a rejection and emits nothing', () => {
+    vi.mocked(settleAudits).mockReturnValue(reject('INVALID_DICE', 'That is not a die.'))
+    const out = runSettlement(scoringState({ round: 20 }), NO_INPUT)
+    expect(isRejection(out)).toBe(true)
+    expect(vi.mocked(lapseDeedOptions)).not.toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 16: Run the Settlement test and watch it fail**
+
+Run: `npx vitest run packages/engine/src/contexts/session/settlement.test.ts`
+Expected: FAIL — `./settlement.js` does not exist.
+
+- [ ] **Step 17: Implement `settlement.ts`**
+
+`packages/engine/src/contexts/session/settlement.ts`:
+
+```ts
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+import type { DiceRoll, PlayerId } from '../../core/types.js'
+import { type Rejection, isRejection } from '../../core/errors.js'
+import { reduce } from '../../core/reduce.js'
+import { expireRentFutures, lapseDeedOptions } from '../markets/index.js'
+import { settleAudits, settleVentures } from '../underworld/index.js'
+import {
+  flagMarginCalls, settleCarryingCost, settleCreditInterest, settleDistressedDebt,
+  settlePeerLoans,
+} from '../credit/index.js'
+import {
+  settleSecuritization, settleSwapPremiums, terminateAllPools,
+} from '../securitization/index.js'
+import { scoreGame } from './scoring.js'
+
+export interface SettlementInput {
+  /**
+   * Audit checks are externally-sourced randomness: one physical 2d6 per player who
+   * needs a check. Missing a required roll rejects the whole Settlement.
+   */
+  readonly auditDice: Readonly<Partial<Record<PlayerId, DiceRoll>>>
+  /** Every event since this round's Market phase began. Spec 19.1 step 6 needs it. */
+  readonly roundEvents: readonly GameEvent[]
+}
+
+type Step = (state: GameState) => readonly GameEvent[] | Rejection
+
+/** Spec 19.1, verbatim, for the rulebook generator and the ordering test. */
+export const SETTLEMENT_STEPS: readonly string[] = [
+  'Rent futures reaching their end round expire',
+  'Venture payouts accrue as dirty cash; venture timers decrement',
+  'Carrying cost charged, $8 per unmortgaged deed',
+  'Credit line interest accrues on drawn balances',
+  'Peer loan interest falls due; unpaid loans default',
+  'Pool waterfalls distribute collected cash',
+  'CDS premiums transfer from buyers to sellers',
+  'Distressed debt accrues at 15%, compounding',
+  'Audit checks roll, Era III onward, and resolve immediately',
+  'Margin calls flagged; previously-flagged uncured positions marked for liquidation',
+  'Deed options reaching expiry lapse',
+]
+
+function steps(input: SettlementInput): readonly Step[] {
+  return [
+    (s) => expireRentFutures(s),
+    (s) => settleVentures(s),
+    (s) => settleCarryingCost(s),
+    (s) => settleCreditInterest(s),
+    (s) => settlePeerLoans(s),
+    (s) => settleSecuritization(s, input.roundEvents),
+    (s) => settleSwapPremiums(s),
+    (s) => settleDistressedDebt(s),
+    (s) => settleAudits(s, input.auditDice),
+    (s) => flagMarginCalls(s),
+    (s) => lapseDeedOptions(s),
+  ]
+}
+
+/**
+ * Folds the steps, reducing as it goes, so every step reads the state the steps before
+ * it produced. That is not an optimisation — spec 19.1 requires an audit fine resolved
+ * at step 9 to be able to trigger the margin call flagged at step 10.
+ *
+ * A rejection from any step aborts the whole Settlement and emits nothing, because a
+ * half-applied Settlement is not a state the log should ever be able to reach.
+ */
+function fold(
+  state: GameState, ordered: readonly Step[],
+): readonly GameEvent[] | Rejection {
+  let current = state
+  const emitted: GameEvent[] = []
+  for (const step of ordered) {
+    const produced = step(current)
+    if (isRejection(produced)) return produced
+    for (const event of produced) {
+      current = reduce(current, event)
+      emitted.push(event)
+    }
+  }
+  return emitted
+}
+
+export function runSettlement(
+  state: GameState, input: SettlementInput,
+): readonly GameEvent[] | Rejection {
+  return fold(state, steps(input))
+}
+
+/**
+ * Round 24 only. Spec 19.1: after step 11, all pools terminate, every tranche short of
+ * face triggers its referencing CDS, then scoring runs. Termination and triggering are
+ * one call because `terminateAllPools` emits each pool's `PoolTerminated` immediately
+ * followed by the `SwapTriggered` events its shortfalls cause — Step 19's test asserts
+ * that interleaving, and that `GameScored` is strictly last.
+ */
+export function runFinalSettlement(
+  state: GameState, input: SettlementInput,
+): readonly GameEvent[] | Rejection {
+  return fold(state, [
+    ...steps(input),
+    (s) => terminateAllPools(s),
+    (s) => [scoreGame(s)],
+  ])
+}
+```
+
+- [ ] **Step 18: Run the Settlement test and watch it pass**
+
+Run: `npx vitest run packages/engine/src/contexts/session/settlement.test.ts`
+Expected: PASS — all four cases green.
+
+- [ ] **Step 19: Write the failing round-24 ordering test**
+
+This is the test the task exists for. Append to `settlement.test.ts`:
+
+```ts
+describe('runFinalSettlement', () => {
+  it('terminates pools, then triggers their CDS, then scores — in that order', () => {
+    vi.mocked(terminateAllPools).mockReturnValue([
+      { type: 'PoolTerminated', poolId: 'pool-1',
+        shortfalls: [{ tranche: 'mezzanine', shortfall: 400 }] },
+      { type: 'SwapTriggered', id: 's-1', payout: 400 },
+    ])
+
+    const out = runFinalSettlement(scoringState({ round: 24 }), NO_INPUT) as readonly GameEvent[]
+    const types = out.map((e) => e.type)
+    expect(types.indexOf('PoolTerminated')).toBeGreaterThan(types.indexOf('HeatChanged'))
+    expect(types.indexOf('SwapTriggered')).toBeGreaterThan(types.indexOf('PoolTerminated'))
+    expect(types.indexOf('GameScored')).toBe(types.length - 1)
+  })
+
+  it('reflects a CDS triggered by termination in the final score', () => {
+    // P4 wrote protection on the mezzanine tranche and has $1,000 clean. The pool
+    // terminates $400 short, the swap triggers, P4 pays P3. If scoring ran before the
+    // trigger, P4 would score 1000 and P3 would score 0.
+    const base = scoringState({
+      round: 24,
+      players: {
+        ...scoringState().players,
+        P3: player('P3', { cleanCash: 0 }),
+        P4: player('P4', { cleanCash: 1_000 }),
+      },
+    })
+    vi.mocked(terminateAllPools).mockReturnValue([
+      { type: 'PoolTerminated', poolId: 'pool-1',
+        shortfalls: [{ tranche: 'mezzanine', shortfall: 400 }] },
+      { type: 'SwapTriggered', id: 's-1', payout: 400 },
+    ])
+
+    const out = runFinalSettlement(base, NO_INPUT) as readonly GameEvent[]
+    const scored = out.find((e) => e.type === 'GameScored')
+    expect(scored).toEqual({
+      type: 'GameScored',
+      netWorths: expect.objectContaining({ P3: 400, P4: 600 }),
+    })
+  })
+
+  it('counts a triggered CDS exactly once, not once in cash and again as notional', () => {
+    const base = scoringState({
+      round: 24,
+      players: { ...scoringState().players, P4: player('P4', { cleanCash: 1_000 }) },
+    })
+    vi.mocked(terminateAllPools).mockReturnValue([
+      { type: 'SwapTriggered', id: 's-1', payout: 400 },
+    ])
+    const out = runFinalSettlement(base, NO_INPUT) as readonly GameEvent[]
+    const scored = out.find((e) => e.type === 'GameScored')
+    // 600, not 200. The notional is not deducted a second time at scoring.
+    expect(scored?.type === 'GameScored' && scored.netWorths.P4).toBe(600)
+  })
+
+  it('still scores when a writer cannot cover the payout from clean cash', () => {
+    const base = scoringState({
+      round: 24,
+      players: { ...scoringState().players, P4: player('P4', { cleanCash: 100 }) },
+    })
+    vi.mocked(terminateAllPools).mockReturnValue([
+      { type: 'SwapTriggered', id: 's-1', payout: 400 },
+      { type: 'ObligationCapitalised', player: 'P4', amount: 300, obligation: 'cds-premium' },
+    ])
+    const out = runFinalSettlement(base, NO_INPUT) as readonly GameEvent[]
+    const scored = out.find((e) => e.type === 'GameScored')
+    // 100 clean spent, 300 capitalised into drawn credit: -300 either way.
+    expect(scored?.type === 'GameScored' && scored.netWorths.P4).toBe(-300)
+  })
+})
+```
+
+The last three cases need the real reducers for `SwapTriggered` and
+`ObligationCapitalised`, which the module mocks replace. Run this file with the
+securitization and credit reducers unmocked by importing `reduce` from
+`core/reduce.js` directly — the mocks only replace the *settlement generators*, and
+`core/reduce.js` reaches the reducers through `contexts/*/index.js`, which is a
+different import specifier and therefore not mocked.
+
+- [ ] **Step 20: Run the round-24 test and watch it fail**
+
+Run: `npx vitest run packages/engine/src/contexts/session/settlement.test.ts`
+Expected: FAIL — `runFinalSettlement` is not exported yet if Step 17 was skipped;
+otherwise the three scoring cases fail because `terminateAllPools` is not yet in the
+step list.
+
+- [ ] **Step 21: Run the round-24 test and watch it pass**
+
+Run: `npx vitest run packages/engine/src/contexts/session/settlement.test.ts`
+Expected: PASS — all eight cases green, including the exactly-once CDS case.
+
+- [ ] **Step 22: Wire the Settlement into `decideSession`**
+
+Modify `packages/engine/src/contexts/session/decide.ts`. `SessionCommand` gains one arm
+and the decider gains one branch; nothing else changes:
+
+```ts
+import type { SettlementInput } from './settlement.js'
+import { runFinalSettlement, runSettlement } from './settlement.js'
+import { ECONOMY } from '../../config/economy.js'
+
+export type SessionCommand =
+  | { readonly kind: 'advance-phase' }
+  | { readonly kind: 'settle'; readonly input: SettlementInput }
+
+// ... inside decideSession, before the advance-phase handling:
+  if (command.kind === 'settle') {
+    if (state.phase !== 'settlement') {
+      return reject('WRONG_PHASE', 'Settlement runs at the end of the round.')
+    }
+    return state.round >= ECONOMY.TOTAL_ROUNDS
+      ? runFinalSettlement(state, command.input)
+      : runSettlement(state, command.input)
+  }
+```
+
+The existing `advance-phase` behaviour is untouched: on `settlement` it still emits
+`PhaseAdvanced { phase: 'scoring' }` at round 24 and `RoundAdvanced`/`EraAdvanced`/
+`PhaseAdvanced` otherwise. `settle` produces the money events; `advance-phase` moves the
+clock. Keeping them separate is what lets the facilitator re-read a Settlement before
+committing to the next round.
+
+- [ ] **Step 23: Export the Task 19 surface**
+
+Add to `packages/engine/src/contexts/session/index.ts`:
+
+```ts
+export {
+  buildingCostBasis, deedValue, instrumentsHeld, markDeedOptionsHeld, markLoanNote,
+  markLoanNotesHeld, markRentFuturesHeld, markSwapsHeld, markTranche, markTranchesHeld,
+  portfolioValue,
+} from './marks.js'
+export {
+  type NetWorthBreakdown, type Standing, type WinProgress,
+  isGameOver, netWorth, netWorthBreakdown, netWorths, scoreGame, standings,
+  targetReachedBy, winProgress, winner,
+} from './scoring.js'
+export {
+  type SettlementInput, SETTLEMENT_STEPS, runFinalSettlement, runSettlement,
+} from './settlement.js'
+```
+
+`netWorth` is the symbol Task 18's `metrics.ts` already imports from
+`../session/index.js`, so this export closes that dependency. It also closes a cycle:
+`decks` reads `session`, `session` reads `credit`, `credit` reads `decks` for the
+borrowing-base overrides. Every edge is a function call rather than a module-init read,
+so ESM resolves it — Step 24's suite run is what proves it.
+
+- [ ] **Step 24: Run the whole suite, then commit Task 19**
+
+Run: `npm run lint && npm run typecheck && npm test`
+Expected: PASS. A `Cannot access '<symbol>' before initialization` here means some
+context evaluates a cross-context import at module scope; move that read inside a
+function.
+
+```bash
+git add packages/engine/src/contexts/session packages/engine/tests/fixtures/scoring-state.ts
+git commit -m "feat(session): scoring, mark-to-model and the Settlement sequence
+
+session owns spec 19.1's eleven-step order because ordering is a rule and
+no other task composed the per-step generators. Round 24 appends pool
+termination, CDS triggering and scoring in that order, so a swap triggered
+by termination lands in the final score exactly once."
+```
+
+---
+
+### Task 20: property-based invariant tests with fast-check
+
+These are the strongest correctness guarantees in the project, and the reason is the
+keystone decision in spec section 14: the engine is a pure reducer with no `Math.random`
+and no `Date`, so a generated event history is a *reproducible* one. Every failure
+fast-check reports is a shrunken script that can be pasted into a unit test and re-run.
+
+**The generator is the whole game here.** A weak generator makes every property below
+worthless — it will pass on histories that never reach a margin call, never mortgage,
+never trigger a swap, and never let an obligation capitalise. So the generator does not
+produce events. It produces **scripted commands**, feeds them to the real `decide`
+functions, and keeps only what the engine accepts. Every event in every generated history
+is therefore engine-produced and valid by construction, and the generator's job reduces to
+producing *plausible* commands rather than legal events.
+
+Two tricks make the acceptance rate high enough to be useful:
+
+1. **Indices, not identities.** A state-blind generator that produced `DeedId` strings
+   would name a deed the acting player does not own roughly six times in seven. Instead it
+   produces an index, and the driver resolves it modulo the length of that player's actual
+   holdings. Acceptance goes from ~14% to ~100% for the same generated shape.
+2. **Fractions, not dollars.** Amounts are generated as a fraction in `[0, 1.2]` and
+   resolved against the live balance. Most land inside the limit; the tail above 1.0 is
+   deliberate, because the rejection path is a code path too.
+
+**Files:**
+- Create: `packages/engine/src/config/assertions.ts`
+- Create: `packages/engine/src/config/assertions.test.ts`
+- Create: `packages/engine/tests/property/arbitraries.ts`
+- Create: `packages/engine/tests/property/driver.ts`
+- Create: `packages/engine/tests/property/ledger.ts`
+- Create: `packages/engine/tests/property/money.test.ts`
+- Create: `packages/engine/tests/property/conservation.test.ts`
+- Create: `packages/engine/tests/property/replay.test.ts`
+- Create: `packages/engine/tests/property/waterfall.test.ts`
+- Create: `packages/engine/tests/property/invariants.test.ts`
+- Create: `packages/engine/tests/property/coverage.test.ts`
+- Modify: `packages/engine/src/config/economy.ts` (imports the assertions)
+- Modify: `.eslintrc.json` (bans the raw percentage pattern)
+
+**File-size plan.** `arbitraries.ts` is ~210 lines of generators, `driver.ts` ~180 lines
+of command dispatch and round loop, `ledger.ts` ~150 lines dominated by the exhaustive
+delta table. The six test files are 60-140 lines each. The split is by role — generate,
+run, measure, assert — so a new invariant adds a test file and touches nothing else.
+
+**Interfaces:**
+
+Consumes — the public surface of every context plus the two core entry points. Signatures
+are the ones the sibling parts declare:
+
+```ts
+// core/reduce.ts  (tasks-03-08.md)
+export function reduce(state: GameState, event: GameEvent): GameState
+export function replay(events: readonly GameEvent[]): GameState
+
+// core/money.ts  (Task 2)
+export function floorPercent(amount: Money, rate: number): Money
+export function ceilPercent(amount: Money, rate: number): Money
+export function floorPercentSum(amount: Money, rates: readonly number[]): Money
+
+// contexts/session/index.ts  (Task 4 + Task 19)
+export function initialState(config: GameConfig): GameState
+export function createGame(config: GameConfig): readonly GameEvent[]
+export function decideSession(state: GameState, c: SessionCommand): readonly GameEvent[] | Rejection
+export function runSettlement(state: GameState, i: SettlementInput): readonly GameEvent[] | Rejection
+export function runFinalSettlement(state: GameState, i: SettlementInput): readonly GameEvent[] | Rejection
+export function netWorth(state: GameState, player: PlayerId): Money
+
+// contexts/draft/index.ts  (Task 8)
+export const DRAFT_ROUNDS: number
+export function availableDeeds(state: GameState): readonly DeedId[]
+export function decideDraft(state: GameState, c: DraftCommand): readonly GameEvent[] | Rejection
+
+// contexts/board/index.ts  (Task 5)
+export function decideBoard(state: GameState, c: BoardCommand): readonly GameEvent[] | Rejection
+
+// contexts/credit/index.ts  (Tasks 9-11)
+export function borrowingBase(state: GameState, player: PlayerId): Money
+export function creditHeadroom(state: GameState, player: PlayerId): Money
+export function marginShortfall(state: GameState, player: PlayerId): Money
+export function liquidationQueue(state: GameState, player: PlayerId): readonly DeedId[]
+export function playersAwaitingLiquidation(state: GameState): readonly PlayerId[]
+export function exhaustLiquidation(state: GameState, player: PlayerId): readonly GameEvent[]
+export function decideCredit(state: GameState, c: CreditCommand, p?: CreditPorts): readonly GameEvent[] | Rejection
+export const NO_ENCUMBRANCES: CreditPorts
+
+// contexts/underworld/index.ts  (Tasks 12-13)
+export function decideUnderworld(state: GameState, c: UnderworldCommand): readonly GameEvent[] | Rejection
+
+// contexts/markets/index.ts  (Tasks 14-15)
+export function decideMarkets(state: GameState, c: MarketsCommand): readonly GameEvent[] | Rejection
+
+// contexts/securitization/index.ts  (Tasks 16-17)
+export function decideSecuritization(state: GameState, c: SecuritizationCommand): readonly GameEvent[] | Rejection
+
+// contexts/decks/index.ts  (Task 18)
+export function decideDeck(state: GameState, c: DeckCommand): readonly GameEvent[] | Rejection
+export const DECKS: Readonly<Record<Era, readonly Card[]>>
+
+// config/board.ts  (Task 3)
+export const DEED_IDS: readonly DeedId[]
+export function totalFaceValue(): Money
+```
+
+Produces:
+
+```ts
+// config/assertions.ts
+export function assertEconomyInvariants(): void
+
+// tests/property/arbitraries.ts
+export type ScriptedAction = /* 15-arm union, below */
+export interface ScriptedRound { readonly actions; readonly rolls; readonly auditDice }
+export interface GameScript { readonly config; readonly shuffles; readonly rounds }
+export const arbDice: fc.Arbitrary<DiceRoll>
+export const arbDiceBiased: fc.Arbitrary<DiceRoll>
+export const arbConfig: fc.Arbitrary<GameConfig>
+export const arbAction: fc.Arbitrary<ScriptedAction>
+export const arbRound: fc.Arbitrary<ScriptedRound>
+export function arbGameScript(maxRounds: number): fc.Arbitrary<GameScript>
+
+// tests/property/driver.ts
+export interface Batch { readonly label: string; readonly events: readonly GameEvent[] }
+export interface Trace {
+  readonly before: readonly GameState[]
+  readonly batches: readonly Batch[]
+  readonly events: readonly GameEvent[]
+  readonly final: GameState
+}
+export function runScript(script: GameScript): Trace
+
+// tests/property/ledger.ts
+export function conservedTotal(state: GameState): Money
+export function expectedDelta(events: readonly GameEvent[]): Money
+export const BANK_CROSSING_EVENTS: readonly EventType[]
+```
+
+---
+
+- [ ] **Step 1: Write the failing startup-assertion test**
+
+`packages/engine/src/config/assertions.test.ts`. Spec section 5 records that the
+floor-versus-advance invariant was violated in an earlier draft, which is exactly why it
+is asserted at startup rather than trusted:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { ECONOMY } from './economy.js'
+import { assertEconomyInvariants } from './assertions.js'
+
+describe('economy invariants', () => {
+  it('passes for the shipped configuration', () => {
+    expect(() => assertEconomyInvariants()).not.toThrow()
+  })
+
+  it('keeps the liquidation floor strictly above the deed advance rate', () => {
+    // Selling a deed raises floor x face but removes advance x face from the base.
+    // A floor at or below the advance rate makes every forced sale WIDEN the shortfall,
+    // so liquidation only terminates by consuming the entire portfolio. Spec section 5.
+    expect(ECONOMY.LIQUIDATION_FLOOR).toBeGreaterThan(ECONOMY.DEED_ADVANCE_RATE)
+  })
+
+  it('keeps the building advance rate at or below the sellback rate', () => {
+    // Stripping buildings returns SELLBACK x cost in cash and removes ADVANCE x cost
+    // from the base. Advancing more than sellback returns widens the shortfall too.
+    expect(ECONOMY.BUILDING_ADVANCE_RATE).toBeLessThanOrEqual(ECONOMY.BUILDING_SELLBACK_RATE)
+  })
+
+  it('names the offending constants when an invariant is broken', () => {
+    expect(() => assertEconomyInvariants({
+      ...ECONOMY, LIQUIDATION_FLOOR: 0.7,
+    })).toThrow(/LIQUIDATION_FLOOR.*DEED_ADVANCE_RATE/)
+    expect(() => assertEconomyInvariants({
+      ...ECONOMY, BUILDING_ADVANCE_RATE: 0.6,
+    })).toThrow(/BUILDING_ADVANCE_RATE.*BUILDING_SELLBACK_RATE/)
+  })
+
+  it('keeps the note-mark leverage cap below the ratings leverage cap', () => {
+    expect(ECONOMY.LOAN_NOTE_MAX_LEVERAGE).toBeLessThanOrEqual(ECONOMY.RATING_MAX_LEVERAGE)
+  })
+
+  it('divides the game into whole eras', () => {
+    expect(ECONOMY.TOTAL_ROUNDS % ECONOMY.ROUNDS_PER_ERA).toBe(0)
+    expect(ECONOMY.TOTAL_ROUNDS / ECONOMY.ROUNDS_PER_ERA).toBe(4)
+  })
+})
+```
+
+- [ ] **Step 2: Run the assertion test and watch it fail**
+
+Run: `npx vitest run packages/engine/src/config/assertions.test.ts`
+Expected: FAIL — `./assertions.js` does not exist.
+
+- [ ] **Step 3: Implement `assertions.ts` and call it from `economy.ts`**
+
+`packages/engine/src/config/assertions.ts`. Task 9 already appends a bare
+`LIQUIDATION_FLOOR` check to the bottom of `economy.ts`; this replaces it, so the two
+divergent-liquidation guards live together and neither can be tuned alone:
+
+```ts
+import { ECONOMY } from './economy.js'
+
+type Economy = typeof ECONOMY
+
+/**
+ * Runs at module load. Both checks guard the same failure mode: a forced sale during
+ * liquidation must always NARROW the shortfall, never widen it.
+ *
+ * Deeds: a sale raises LIQUIDATION_FLOOR x face and removes DEED_ADVANCE_RATE x face
+ * from the borrowing base, so the shortfall narrows by (floor - advance) x face. At
+ * 0.80 against 0.75 that is 5% of face per sale and liquidation converges. At a 0.70
+ * floor it is -5% and the loop terminates only by consuming the whole portfolio.
+ *
+ * Buildings: stripping returns BUILDING_SELLBACK_RATE x cost and removes
+ * BUILDING_ADVANCE_RATE x cost, so the shortfall narrows by (sellback - advance) x cost.
+ * At 0.5 against 0.5 that is exactly zero — stripping is shortfall-neutral, which spec
+ * section 5 states outright. Equality is therefore allowed; excess advance is not.
+ */
+export function assertEconomyInvariants(economy: Economy = ECONOMY): void {
+  if (economy.LIQUIDATION_FLOOR <= economy.DEED_ADVANCE_RATE) {
+    throw new Error(
+      `LIQUIDATION_FLOOR (${economy.LIQUIDATION_FLOOR}) must be strictly greater than `
+      + `DEED_ADVANCE_RATE (${economy.DEED_ADVANCE_RATE}) or forced liquidation diverges: `
+      + 'every sale would widen the shortfall it is meant to close. See spec section 5.',
+    )
+  }
+  if (economy.BUILDING_ADVANCE_RATE > economy.BUILDING_SELLBACK_RATE) {
+    throw new Error(
+      `BUILDING_ADVANCE_RATE (${economy.BUILDING_ADVANCE_RATE}) must not exceed `
+      + `BUILDING_SELLBACK_RATE (${economy.BUILDING_SELLBACK_RATE}) or stripping a `
+      + 'developed deed widens the shortfall. See spec section 5.',
+    )
+  }
+  if (economy.LOAN_NOTE_MAX_LEVERAGE > economy.RATING_MAX_LEVERAGE) {
+    throw new Error(
+      `LOAN_NOTE_MAX_LEVERAGE (${economy.LOAN_NOTE_MAX_LEVERAGE}) must not exceed `
+      + `RATING_MAX_LEVERAGE (${economy.RATING_MAX_LEVERAGE}); the note mark re-caps the `
+      + 'value the ratings formula already capped, and re-capping upward is a no-op.',
+    )
+  }
+  if (economy.TOTAL_ROUNDS % economy.ROUNDS_PER_ERA !== 0) {
+    throw new Error(
+      `TOTAL_ROUNDS (${economy.TOTAL_ROUNDS}) must divide evenly into eras of `
+      + `${economy.ROUNDS_PER_ERA} rounds.`,
+    )
+  }
+}
+```
+
+Modify `packages/engine/src/config/economy.ts` — delete Task 9's inline
+`LIQUIDATION_FLOOR` throw and append instead:
+
+```ts
+import { assertEconomyInvariants } from './assertions.js'
+
+assertEconomyInvariants()
+```
+
+- [ ] **Step 4: Run the assertion test and watch it pass, then commit**
+
+Run: `npx vitest run packages/engine/src/config/assertions.test.ts`
+Expected: PASS — all six cases green.
+
+```bash
+git add packages/engine/src/config
+git commit -m "feat(config): assert the divergent-liquidation invariants at startup
+
+LIQUIDATION_FLOOR must exceed DEED_ADVANCE_RATE and BUILDING_ADVANCE_RATE
+must not exceed BUILDING_SELLBACK_RATE. Both guard the same failure: a
+forced sale must narrow the shortfall, never widen it. Spec section 5
+records that the first was violated in an earlier draft."
+```
+
+- [ ] **Step 5: Ban the raw percentage pattern in ESLint**
+
+Modify `.eslintrc.json`, inside the existing `packages/engine/src/**/*.ts` override. This
+is the rule the plan's global constraints promise and no earlier task installs:
+
+```json
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "CallExpression[callee.object.name='Math'][callee.property.name=/^(floor|ceil|round)$/] > BinaryExpression[operator='*']",
+            "message": "Percentage-of-money arithmetic must go through core/money.ts. 180 * 0.7 is 125.99999999999999, so Math.floor of it is 125 and underpays the 70% floor. Use floorPercent, ceilPercent or floorPercentSum."
+          }
+        ]
+```
+
+The selector matches `Math.floor(a * b)`, `Math.ceil(a * b)` and `Math.round(a * b)` and
+nothing else, so `Math.floor(x / 2)` and `Math.max(0, v)` stay legal. `core/money.ts`
+itself needs an override that disables the rule, since it is the one file that performs
+the multiplication:
+
+```json
+    {
+      "files": ["packages/engine/src/core/money.ts"],
+      "rules": { "no-restricted-syntax": "off" }
+    }
+```
+
+Run: `npm run lint`
+Expected: FAIL, listing every site that still writes the raw pattern — at minimum Task
+9's `applyRate`, Task 12's `applyBps`, Task 16's duplicate `floorPercent` and Task 18's
+`peer-interest-due-per-round` metric. Fixing them is Step 6.
+
+- [ ] **Step 6: Collapse the four competing percentage helpers into `core/money.ts`**
+
+Four tasks independently wrote the same helper under four names, with two different
+rounding strategies:
+
+| Symbol | Owner | Body |
+|---|---|---|
+| `applyRate(amount, rate)` | Task 9, `core/money.ts` | `Math.floor(Math.round(amount * rate * 1e6) / 1e6)` |
+| `applyBps(amount, points)` | Task 12, `underworld/selectors.ts` | `Math.floor((amount * points) / 10_000)` |
+| `floorPercent(amount, rate)` | Task 16, `core/money.ts` | `Math.floor(Math.round(amount * rate * 1e6) / 1e6)` |
+| `floorPercent(amount, rate)` | Task 2, `core/money.ts` | basis points, exact |
+
+Keep Task 2's. Delete the other three and re-export aliases so no call site has to change
+in the same commit:
+
+```ts
+// packages/engine/src/core/money.ts — appended below the Task 2 definitions
+
+/** @deprecated Task 9's name for `floorPercent`. Kept so callers migrate in one step. */
+export const applyRate = floorPercent
+
+/** Task 12 works in basis points directly; `rates` there are already integers. */
+export function applyBps(amount: Money, points: number): Money {
+  return Math.floor((amount * points) / 10_000)
+}
+
+export function isWholeDollars(amount: number): boolean {
+  return Number.isInteger(amount) && amount >= 0
+}
+```
+
+Delete `contexts/underworld/selectors.ts`'s local `applyBps`/`toBps` and Task 16's
+duplicate `floorPercent`, importing both from `core/money.js` instead.
+
+Run: `npm run lint && npm run typecheck`
+Expected: PASS.
+
+- [ ] **Step 7: Write the money-arithmetic property test**
+
+`packages/engine/tests/property/money.test.ts`. This is the smallest property in the
+suite and the one everything else rests on, so it gets an exact oracle rather than a
+float comparison:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { ceilPercent, floorPercent, floorPercentSum } from '../../src/core/money.js'
+
+/** Exact rational oracle in BigInt basis points. No IEEE 754 anywhere. */
+function exact(amount: number, rate: number, dir: 'floor' | 'ceil'): number {
+  const bp = BigInt(Math.round(rate * 10_000))
+  const n = BigInt(amount) * bp
+  const q = n / 10_000n
+  const r = n % 10_000n
+  if (r === 0n) return Number(q)
+  return dir === 'floor' ? Number(q) : Number(q + 1n)
+}
+
+const arbAmount = fc.integer({ min: 0, max: 20_000 })
+/** Every rate the ruleset uses lands in [0, 2] at 2-decimal granularity. */
+const arbRate = fc.integer({ min: 0, max: 200 }).map((n) => n / 100)
+
+describe('floorPercent', () => {
+  it('equals exact integer arithmetic for every amount and rate in range', () => {
+    fc.assert(
+      fc.property(arbAmount, arbRate, (amount, rate) => {
+        expect(floorPercent(amount, rate)).toBe(exact(amount, rate, 'floor'))
+      }),
+      { numRuns: 2_000 },
+    )
+  })
+
+  it('is monotonic in the amount', () => {
+    fc.assert(
+      fc.property(arbAmount, arbAmount, arbRate, (a, b, rate) => {
+        const [lo, hi] = a <= b ? [a, b] : [b, a]
+        expect(floorPercent(lo, rate)).toBeLessThanOrEqual(floorPercent(hi, rate))
+      }),
+      { numRuns: 1_000 },
+    )
+  })
+
+  it('never exceeds ceilPercent, and differs by at most one dollar', () => {
+    fc.assert(
+      fc.property(arbAmount, arbRate, (amount, rate) => {
+        const lo = floorPercent(amount, rate)
+        const hi = ceilPercent(amount, rate)
+        expect(hi - lo).toBeGreaterThanOrEqual(0)
+        expect(hi - lo).toBeLessThanOrEqual(1)
+      }),
+      { numRuns: 1_000 },
+    )
+  })
+
+  it('returns integer dollars for every input', () => {
+    fc.assert(
+      fc.property(arbAmount, arbRate, (amount, rate) => {
+        expect(Number.isInteger(floorPercent(amount, rate))).toBe(true)
+        expect(Number.isInteger(ceilPercent(amount, rate))).toBe(true)
+      }),
+      { numRuns: 500 },
+    )
+  })
+})
+
+describe('floorPercentSum', () => {
+  it('equals one exact application of the summed rate, never a chain of floors', () => {
+    fc.assert(
+      fc.property(arbAmount, fc.array(arbRate, { minLength: 1, maxLength: 4 }), (amount, rates) => {
+        const summed = rates.reduce((t, r) => t + Math.round(r * 10_000), 0) / 10_000
+        expect(floorPercentSum(amount, rates)).toBe(exact(amount, summed, 'floor'))
+      }),
+      { numRuns: 1_000 },
+    )
+  })
+
+  it('reproduces the laundering bug that motivated it', () => {
+    // 0.25 + 0.05 * 2 is 0.35000000000000003, which floors $1,000 to $649.
+    expect(floorPercentSum(1_000, [0.25, 0.05, 0.05])).toBe(350)
+  })
+})
+```
+
+- [ ] **Step 8: Run the money property and watch it pass, then commit**
+
+Run: `npx vitest run packages/engine/tests/property/money.test.ts`
+Expected: PASS — 6,500 generated cases across five properties.
+
+```bash
+git add .eslintrc.json packages/engine/src/core/money.ts packages/engine/tests/property/money.test.ts
+git commit -m "test(property): prove core/money.ts is exact, and ban the raw pattern
+
+An ESLint no-restricted-syntax rule now rejects Math.floor(a * b) outside
+core/money.ts, and four competing percentage helpers written independently
+by Tasks 9, 12 and 16 collapse into Task 2's basis-point implementation."
+```

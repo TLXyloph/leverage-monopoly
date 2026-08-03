@@ -829,7 +829,7 @@ describe('pool collection', () => {
       {
         type: 'PoolCollateralLiquidated', poolId: 'pool-1', loanId: 'l-1',
         deeds: ['st-james-place', 'tennessee-avenue'],
-        proceeds: 252, // floorPercent(180, 0.7) = 126, per deed, then summed
+        proceeds: 288, // floorPercent(180, LIQUIDATION_FLOOR=0.8) = 144, per deed, then summed
       },
     ])
   })
@@ -1456,7 +1456,7 @@ describe('termination', () => {
     expect(settleSecuritization(state, roundEvents)).toEqual([
       {
         type: 'PoolCollateralLiquidated', poolId: 'pool-1', loanId: 'l-1',
-        deeds: ['boardwalk'], proceeds: 280, // floorPercent(400, 0.7)
+        deeds: ['boardwalk'], proceeds: 320, // floorPercent(400, LIQUIDATION_FLOOR=0.8)
       },
       {
         type: 'WaterfallPaid', poolId: 'pool-1', collected: 830, // 280 + 550
