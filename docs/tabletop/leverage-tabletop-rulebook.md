@@ -505,12 +505,22 @@ where you need neither the rent nor the base, that trade is sometimes simply cor
 
 You collect rent when an opponent's token comes to rest on an unmortgaged deed you own.
 
-- **Undeveloped:** base rent. **If you own the entire colour group and none of it is developed,
-  the base rent doubles.**
+- **Undeveloped:** base rent. **If you own every deed in that colour group, the base rent doubles.**
 - **Developed:** the rent for its current house count, from [5.2](#52-deeds-price-rent-credit-value-traffic).
 - **Railroads:** $25 / $50 / $100 / $200 for one, two, three or four owned.
 - **Utilities:** 4× the dice roll if you own one, 10× if you own both. Re-roll is not permitted —
   use the roll that landed them there.
+
+**Doubling is per square, not per set.** The test is whether you own the whole group, *not*
+whether the whole group is undeveloped. A group with houses on one deed **still pays doubled rent
+on its undeveloped siblings** — that deed is charged its own doubled base rent while the developed
+one is charged its house rent. This is the standard Monopoly rule.
+
+**Mortgaged deeds count for nothing.** A mortgaged deed charges no rent itself, and it counts
+toward **neither the colour-group ownership test nor the railroad and utility owned-counts.**
+Mortgage one of your four railroads and the other three pay $100 each, not $200. Mortgage one
+orange deed and the other two lose their doubling. This is the hidden cost of mortgaging inside a
+set you have completed, and it catches people every game.
 
 ### Building
 
@@ -1209,9 +1219,10 @@ it); the first three Settlements (they speed up 3× once the script is familiar)
 
 ## 5.2 Deeds: price, rent, credit value, traffic
 
-Rent shown is the base. **Double the base rent if you own the full colour group and none of it is
-developed.** "Credit" is the 75% of face that this deed contributes to your borrowing base while
-unmortgaged. "Liq" is the 80%-of-face forced-liquidation floor.
+Rent shown is the base. **Double the base rent on any undeveloped deed in a colour group you own
+entirely** — per square, regardless of whether its siblings are developed. Mortgaged deeds break
+the ownership test. "Credit" is the 75% of face that this deed contributes to your borrowing base
+while unmortgaged. "Liq" is the 80%-of-face forced-liquidation floor.
 
 | Sq | Property | Group | Price | **Credit** | Mtg | Unmtg | **Liq** | House | Rent | 1H | 2H | 3H | 4H | Hotel | Landing % |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -1359,7 +1370,11 @@ Multiply by **1.15** each Settlement and round down. Or read the multiplier:
 | Rounds carried | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 |---|---|---|---|---|---|---|---|---|
 | Multiplier | ×1.15 | ×1.32 | ×1.52 | ×1.75 | ×2.01 | ×2.31 | ×2.66 | ×3.06 |
-| $1,000 becomes | $1,150 | $1,322 | $1,520 | $1,749 | $2,011 | $2,313 | $2,660 | $3,059 |
+| $1,000 becomes | $1,150 | $1,322 | $1,520 | $1,748 | $2,010 | $2,311 | $2,657 | $3,055 |
+
+*The $1,000 row applies the round-down at every step, which is what you do at the table. The
+multiplier row is the shortcut; it drifts a few dollars high over many rounds. When they disagree,
+the step-by-step figure is correct.*
 
 **It doubles in five rounds.** A shortfall taken in round 14 and ignored is worth 4× against you
 at scoring. Every $100 repaid immediately is worth $200 at scoring five rounds later.
@@ -1834,9 +1849,9 @@ at 15% a round:
 
 | End of round | 18 | 19 | 20 | 21 | 22 | 23 | **24** |
 |---|---|---|---|---|---|---|---|
-| Distressed debt | $1,955 | $2,248 | $2,585 | $2,973 | $3,419 | $3,932 | **$4,522** |
+| Distressed debt | $1,955 | $2,248 | $2,585 | $2,972 | $3,417 | $3,929 | **$4,518** |
 
-A $1,700 shortfall in round 17 subtracts **$4,522** from your final net worth if you ignore it.
+A $1,700 shortfall in round 17 subtracts **$4,518** from your final net worth if you ignore it.
 Every $100 you repay in round 18 is worth **$266** at scoring.
 
 **And there is a second problem you just created.** You drew your credit line to exactly your

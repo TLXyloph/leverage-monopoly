@@ -466,9 +466,6 @@ export const ECONOMY = {
   /** Advanced at the start of round 7 as an interest-bearing loan, not a grant. */
   ERA_II_STIMULUS: 300 as Money,
 
-  /** Paid when a player cannot cover face value of any remaining deed in a draft round. */
-  DRAFT_SKIP_COMPENSATION: 150 as Money,
-
   /**
    * Borrowing base = deed face x this + building cost x BUILDING_ADVANCE_RATE.
    * BUILDING_ADVANCE_RATE must never exceed BUILDING_SELLBACK_RATE, or stripping a
@@ -529,6 +526,38 @@ export const ECONOMY = {
   /** Hard game length. Simulation shows 36 rounds produces 82% bankruptcy. */
   TOTAL_ROUNDS: 24,
   ROUNDS_PER_ERA: 6,
+
+  /**
+   * The venture table. Keyed by the same literals the events use, so retuning a
+   * venture is a one-line edit. These are the values most likely to move after
+   * the first playtest — Escort was already recut once from $300/40% to $150/60%
+   * after simulation showed it was never worth launching.
+   */
+  VENTURES: {
+    escort: { cost: 150 as Money, rounds: 4, heat: 2, rentShare: 0.6 },
+    numbers: { cost: 150 as Money, rounds: 6, heat: 2, perRound: 60 as Money },
+    'chop-shop': { cost: 250 as Money, rounds: 4, heat: 3, perLanding: 150 as Money },
+  },
+  SPEAKEASY_COST: 250 as Money,
+  SPEAKEASY_HEAT: 2,
+  /** Indexed by 2d6 total, 2-12. Expected payout $294 against a $250 cost. */
+  SPEAKEASY_PAYOUTS: {
+    2: 0, 3: 100, 4: 100, 5: 100, 6: 250, 7: 250,
+    8: 250, 9: 500, 10: 500, 11: 500, 12: 1200,
+  } as Record<number, Money>,
+
+  BRIBERY_COST: 200 as Money,
+  BRIBERY_HEAT: 1,
+  INSIDER_TRADING_COST: 100 as Money,
+  INSIDER_TRADING_HEAT: 1,
+  LAUNDER_HEAT: 1,
+  HEAT_DECAY: 1,
+
+  /** Instrument gating, ignored when config.unlockMode is 'all'. */
+  VENTURES_UNLOCK_ERA: 2 as Era,
+  LAUNDERING_UNLOCK_ERA: 2 as Era,
+  BRIBERY_UNLOCK_ERA: 2 as Era,
+  INSIDER_TRADING_UNLOCK_ERA: 3 as Era,
 } as const
 
 type RoundNumberLiteral = number
@@ -569,17 +598,29 @@ export interface PlayerState {
   readonly heat: number
   readonly position: SquareIndex
   readonly inJail: boolean
+  /** 0-2. A third consecutive double sends the player to Jail. Cannot be derived — the reducer has no log access. */
+  readonly consecutiveDoubles: number
   readonly drawnCredit: Money
   readonly distressedDebt: Money
   /** Set permanently after defaulting on a peer loan. Halves borrowing base. */
   readonly creditImpaired: boolean
   readonly ventures: readonly ActiveVenture[]
-  /** Remaining draft budget. Meaningful only during the draft phase. */
-  readonly draftBudget: Money
   /** Round in which a margin call was flagged, or null if the player is clear. */
   readonly marginCallFlaggedAt: RoundNumber | null
   readonly launderedThisPhase: boolean
   readonly briberyUsedThisRound: boolean
+  /**
+   * True once the player takes a DELIBERATE dirty action this round. Set by the
+   * reducer on any HeatChanged with a positive delta, which is exactly the set of
+   * deliberate actions — so per spec 19.13 an automatic venture payout cannot
+   * block Heat decay by construction.
+   */
+  readonly dirtyActionThisRound: boolean
+  readonly insiderRevealedThisRound: boolean
+  /** Set by a force-reroll bribe, consumed by the board context. */
+  readonly rerollForced: boolean
+  /** Set by a cancel-card bribe, consumed by the decks context. */
+  readonly cardCancelled: boolean
 }
 
 export interface DeedState {
@@ -710,6 +751,9 @@ export type RejectionCode =
   | 'INCOMPLETE_COLOUR_GROUP' | 'UNEVEN_BUILD' | 'NO_HOUSES_REMAINING'
   | 'ALREADY_LAUNDERED_THIS_PHASE' | 'BRIBERY_ALREADY_USED'
   | 'POOL_NEEDS_THREE_ASSETS' | 'TRANCHES_EXCEED_POOL' | 'NOT_ASSET_OWNER'
+  | 'INVALID_DICE' | 'VENTURE_ALREADY_ACTIVE' | 'INVALID_BRIBERY_TARGET'
+  | 'SELF_DEALING' | 'NEGATIVE_AMOUNT' | 'DUPLICATE_CONTRACT_ID'
+  | 'ASSET_IN_LIVE_POOL'
 
 export interface Rejection {
   readonly rejected: true
@@ -738,6 +782,21 @@ import type {
 } from './types.js'
 import type { GameConfig, PoolAssetRef, SwapReference, Tranche } from './state.js'
 
+/**
+ * Every obligation the universal waterfall in spec 19.8 can capitalise.
+ * A closed union so the reducer can dispatch and the facilitator can read
+ * why a drawn balance moved.
+ */
+export type ObligationKind =
+  | 'rent' | 'tax' | 'jail-fee' | 'interest' | 'carrying-cost'
+  | 'audit-fine' | 'cds-premium' | 'peer-loan-interest'
+
+/** Typed so the reducer never parses a display string. */
+export type BriberyEffect =
+  | { readonly kind: 'force-reroll'; readonly target: PlayerId }
+  | { readonly kind: 'cancel-card' }
+  | { readonly kind: 'delay-margin-call' }
+
 export type GameEvent =
   // --- session ---
   | { type: 'GameCreated'; config: GameConfig }
@@ -749,7 +808,7 @@ export type GameEvent =
   // --- draft ---
   | { type: 'DraftSubmitted'; player: PlayerId; ranked: readonly DeedId[]; maxBid: Money }
   | { type: 'DraftDeedAwarded'; player: PlayerId; deed: DeedId; price: Money; contested: boolean }
-  | { type: 'DraftRoundSkipped'; player: PlayerId; compensation: Money }
+  | { type: 'DraftRoundResolved'; round: RoundNumber }
 
   // --- movement ---
   | { type: 'DiceRolled'; player: PlayerId; dice: DiceRoll }
@@ -776,6 +835,8 @@ export type GameEvent =
   | { type: 'CreditRepaid'; player: PlayerId; amount: Money }
   | { type: 'InterestAccrued'; player: PlayerId; amount: Money; rate: number }
   | { type: 'StimulusAdvanced'; player: PlayerId; amount: Money }
+  | { type: 'ObligationCapitalised'; player: PlayerId; amount: Money
+      obligation: ObligationKind }
   | { type: 'MarginCallFlagged'; player: PlayerId; shortfall: Money }
   | { type: 'MarginCallCured'; player: PlayerId }
   | { type: 'DeedLiquidated'; player: PlayerId; deed: DeedId; buyer: PlayerId | 'bank'; price: Money }
@@ -799,6 +860,7 @@ export type GameEvent =
   | { type: 'RentFutureExpired'; id: ContractId }
   | { type: 'DeedOptionWritten'; id: ContractId; deed: DeedId; writer: PlayerId
       holder: PlayerId; premium: Money; strike: Money; expiry: RoundNumber }
+  | { type: 'DeedOptionSold'; id: ContractId; from: PlayerId; to: PlayerId; price: Money }
   | { type: 'DeedOptionExercised'; id: ContractId; strikePaid: Money }
   | { type: 'DeedOptionExpired'; id: ContractId }
 
@@ -809,6 +871,8 @@ export type GameEvent =
       from: PlayerId; to: PlayerId; price: Money }
   | { type: 'WaterfallPaid'; poolId: ContractId; collected: Money
       distributions: readonly { tranche: Tranche['kind']; amount: Money }[] }
+  | { type: 'PoolCollateralLiquidated'; poolId: ContractId; loanId: ContractId
+      deeds: readonly DeedId[]; proceeds: Money }
   | { type: 'PoolTerminated'; poolId: ContractId
       shortfalls: readonly { tranche: Tranche['kind']; shortfall: Money }[] }
   | { type: 'SwapWritten'; id: ContractId; buyer: PlayerId; seller: PlayerId
@@ -819,16 +883,21 @@ export type GameEvent =
 
   // --- underworld ---
   | { type: 'VentureLaunched'; player: PlayerId; venture: 'escort' | 'numbers' | 'chop-shop'
-      cost: Money; rounds: number }
-  | { type: 'SpeakeasyPlayed'; player: PlayerId; dice: DiceRoll; payout: Money }
+      cost: Money; rounds: number; fundedFrom: 'clean' | 'dirty' }
+  | { type: 'VentureTicked'; player: PlayerId; venture: 'escort' | 'numbers' | 'chop-shop'
+      roundsRemaining: number }
+  | { type: 'SpeakeasyPlayed'; player: PlayerId; dice: DiceRoll; payout: Money
+      fundedFrom: 'clean' | 'dirty' }
   | { type: 'DirtyCashEarned'; player: PlayerId; amount: Money
       source: 'escort' | 'numbers' | 'chop-shop' | 'speakeasy' }
   | { type: 'CashLaundered'; player: PlayerId; dirtyIn: Money; cleanOut: Money; haircut: number }
   | { type: 'HeatChanged'; player: PlayerId; delta: number; reason: string }
   | { type: 'AuditChecked'; player: PlayerId; dice: DiceRoll; heat: number; audited: boolean }
-  | { type: 'AuditResolved'; player: PlayerId; seized: Money; fine: Money }
-  | { type: 'BriberyUsed'; player: PlayerId; cost: Money; effect: string }
-  | { type: 'InsiderTradingUsed'; player: PlayerId; cost: Money }
+  | { type: 'AuditResolved'; player: PlayerId; seized: Money; fine: Money
+      paidFromCash: Money; capitalised: Money }
+  | { type: 'BriberyUsed'; player: PlayerId; cost: Money; effect: BriberyEffect }
+  | { type: 'InsiderTradingUsed'; player: PlayerId; cost: Money
+      fundedFrom: 'clean' | 'dirty' }
 
   // --- decks ---
   | { type: 'DeckShuffled'; era: Era; order: readonly number[] }
@@ -873,6 +942,15 @@ describe('economy constants', () => {
     const scores = RATING_BANDS.map(([score]) => score)
     expect(scores).toEqual([...scores].sort((a, b) => b - a))
     expect(RATING_FLOOR).toBe('CCC')
+  })
+
+  it('keeps liquidation convergent', () => {
+    // A forced sale must always NARROW the shortfall. It raises floor x face in
+    // cash but removes advance x face from the borrowing base, so a floor below
+    // the advance rate widens the gap on every sale and the loop never cures.
+    expect(ECONOMY.LIQUIDATION_FLOOR).toBeGreaterThan(ECONOMY.DEED_ADVANCE_RATE)
+    // Same class of bug for buildings: they must not advance more than they return.
+    expect(ECONOMY.BUILDING_ADVANCE_RATE).toBeLessThanOrEqual(ECONOMY.BUILDING_SELLBACK_RATE)
   })
 
   it('reproduces the worked ratings example from spec section 8', () => {
