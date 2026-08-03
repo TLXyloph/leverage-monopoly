@@ -73,7 +73,7 @@ Instruments unlock progressively. This is the default; an admin setting
 | Era | Rounds | Rate | Unlocks |
 |---|---|---|---|
 | **I — Recovery** | 1–6 | 5% | Deeds, building, mortgage, trading, bank credit line |
-| **II — Expansion** | 7–12 | 6% | Peer loans, rent futures, ventures, laundering, bribery. Treasury pays $300 stimulus to each player at the start of round 7. |
+| **II — Expansion** | 7–12 | 6% | Peer loans, rent futures, ventures, laundering, bribery. Treasury advances each player a $300 stimulus at the start of round 7, **as an interest-bearing loan**. |
 | **III — Financialization** | 13–18 | 8% | CDO pools and tranches, CDS, deed options, insider trading. **Audit checks begin.** |
 | **IV — Reckoning** | 19–24 | 12% | No new instruments. Rate pressure and the Reckoning deck only. |
 
@@ -100,7 +100,9 @@ the engine must implement it and the landing-probability model depends on some o
   is a legitimate and deliberate strategy.
 - **Mortgages** pay 50% of face value; unmortgaging costs 55%. A mortgaged property
   collects no rent and contributes nothing to the borrowing base.
-- **GO** pays $200 on passing or landing, from the Treasury.
+- **GO** pays **$350** on passing or landing, from the Treasury. This is higher than
+  standard Monopoly because the per-deed carrying cost drains far more than standard
+  Monopoly ever does; the pair was tuned together and neither number is meaningful alone.
 - **Income Tax** (square 4) is a flat $200 and **Luxury Tax** (square 38) is $100, both
   paid to the Treasury. The percentage option on Income Tax is not offered.
 - **Free Parking** (square 20) does nothing. No accumulated-pot house rule.
@@ -158,34 +160,82 @@ afterthought, and it gives deed options (Era III) a clear purpose.
 
 ## 4. Money supply
 
+All figures in this section are the output of a Monte Carlo study of 172,000 simulated
+games across 43 configurations, with money conservation verified in every trial. See
+[section 19](#19-validated-reference-data). **Every constant here lives in a single
+tunable config module**, because they will want retuning after the game is played.
+
 ### Starting position
 
-Each player receives a **single unified budget of $3,000**. The draft spends from it;
+Each player receives a **single unified budget of $2,500**. The draft spends from it;
 whatever remains is that player's operating cash. There is no separate acquisition
 budget, so the deeds-versus-liquidity tradeoff is made before a die is rolled.
 
 ```
-STARTING TOTAL                     $12,000   ($3,000 x 4)
+STARTING TOTAL                     $10,000   ($2,500 x 4)
 TOTAL FACE VALUE OF 28 DEEDS        $5,690
-EXPECTED DRAFT OUTFLOW             ~$6,700   (face + contest premiums)
+EXPECTED DRAFT OUTFLOW             ~$6,300   (face + contest premiums)
                                        ↓
-EXPECTED HOLDINGS AFTER DRAFT      ~$5,300   (~$1,325 each)
+EXPECTED HOLDINGS AFTER DRAFT      ~$3,700   (~$925 each)
 ```
+
+### Carrying cost
+
+Each Settlement, every player pays **$8 per unmortgaged deed** to the Treasury.
+Buildings are **not** charged.
+
+This is the recurring drain that makes the entire credit layer function. Rent is a
+player-to-player transfer that nets to zero, so without a drain the economy has income
+but no pressure, and nobody ever needs to borrow — which would leave peer loans rare
+and the whole Era III securitization layer decorative.
+
+**It is deliberately a flat per-deed charge rather than a percentage of value.** An
+ad-valorem levy was tested and rejected: because monopolies are rare by design,
+expensive deeds do not earn proportionally more rent, so charging on face value bills
+the most for the assets that earn the least. Simulation showed it inverting the draft
+outright — the top drafter's win rate fell from 28% to 18% against a 25% neutral
+baseline, and their mean net worth dropped below the bottom drafter's at every rate
+tested. The incidence is simply wrong, and no rate corrects it.
+
+The flat charge raises equivalent revenue with neutral incidence, since the draft gives
+every player exactly seven deeds. It also makes **mortgaging a live tactical lever**:
+mortgaging cuts your carrying cost immediately, at the price of borrowing base and rent.
+
+The charge applies from **round 1**. A grace period until round 7 was tested and
+rejected — it lets players bank a cash cushion the charge never catches up with, and
+peak table debt collapses from $2,142 to $1,157.
 
 ### Treasury
 
 Draft proceeds flow to a **Treasury**, not out of the game. The Treasury pays out on a
-fixed schedule and takes in all interest paid to the bank:
+fixed schedule and takes in carrying costs and all interest paid to the bank:
 
 | Flow | Direction | Amount |
 |---|---|---|
-| Draft proceeds | In | ~$6,700 |
-| Credit line interest | In | variable |
-| GO salary | Out | $200 per pass |
-| Era II stimulus | Out | $300 per player, once, at round 7 |
+| Draft proceeds | In | ~$6,300 |
+| Carrying cost | In | $8 per unmortgaged deed per player per round |
+| Credit line interest | In | variable, and now material |
+| GO salary | Out | $350 per pass |
+| Era II stimulus | Out | $300 per player at round 7, **as an interest-bearing loan** |
+
+The Era II stimulus is a **loan, not a grant** — it is added to the player's drawn
+credit balance and accrues at the prevailing era rate. This single change converts
+$1,200 of permanent inflation into serviceable debt and gives the Treasury a real
+revenue leg, lifting its interest income roughly sixfold.
 
 The Treasury may run a deficit; it is an accounting entity, not a constraint. Its
 balance is displayed to all players as a macro indicator.
+
+### The money supply deflates, deliberately
+
+Under this configuration the money supply contracts roughly 29% over 24 rounds. This is
+intended and should not be corrected. Cash scarcity is what creates borrowing, and cash
+scarcity *is* deflation — they are one variable observed twice. A neutral-supply
+configuration exists but drops peak table debt by a third.
+
+The defect in the earlier design was never the direction of the money supply. It was
+that liquidity pressure *decreased* over the game while the interest curve escalated
+from 5% to 12%. Mild deflation puts those two forces in the same direction.
 
 ---
 
@@ -193,7 +243,14 @@ balance is displayed to all players as a macro indicator.
 
 A revolving credit line. Draw and repay freely during any Open phase.
 
-**Borrowing base** = 50% of unmortgaged deed face value + 25% of building cost.
+**Borrowing base** = **75%** of unmortgaged deed face value + **50%** of building cost.
+
+These ratios are load-bearing rather than arbitrary. At 50%/25% the total credit
+available to the entire table is capped at $2,845 — 50% of the board's $5,690 face
+value — which is too little to securitize meaningfully and made the design's own debt
+targets arithmetically unreachable. Raising the base also cuts forced liquidations from
+81% to 63% of the games in which they occur, because a player absorbing a shock can now
+borrow through it instead of mortgaging into a spiral.
 
 Interest accrues each Settlement on the drawn balance at the era's prevailing rate
 and is paid to the Treasury. If a player cannot pay interest from clean cash, the
@@ -780,3 +837,62 @@ who read the data the app provides.
 Jail is the most-landed square overall at 6.22%, which is why the orange group — sitting
 six to nine squares past Jail, squarely inside the 2d6 sweet spot — leads all colour
 groups per square.
+
+### Economy simulation
+
+172,000 simulated games across 43 configurations. Money conservation verified in 100%
+of trials on two independent checks: a three-pool invariant, and a bottom-up flow-ledger
+reconciliation. The movement engine was validated separately against the landing
+probabilities above.
+
+- Simulation: `scripts/economy_sim.py` (`--v2` runs the carrying-cost study)
+- Results: `docs/reference/economy-results.md`, `docs/reference/economy-results-v2.md`
+
+Behaviour of the specified configuration:
+
+| Measure | Value |
+|---|---|
+| Credit drawn at some point | 93% of games |
+| Peak total table debt | $2,142 (p90 $3,360) |
+| Bankruptcy rate | 4.8% |
+| Median player cash floor | $594 |
+| Player-rounds below $200 | 1.6% |
+| Top-draft-position win rate | 24% (25% is neutral) |
+| Money supply over 24 rounds | −29% |
+
+Rejected alternatives, with the reason each failed:
+
+| Tested | Result |
+|---|---|
+| Ad-valorem carrying cost, 1–4% of portfolio value | **Inverts the draft.** Top-drafter win rate 28% → 18%; structural, not tunable |
+| 4% ad-valorem rate | Bankruptcy 20.4%, over double the 10% ceiling |
+| Carrying cost from round 7 | Peak debt collapses $2,142 → $1,157; players bank an uncatchable cushion |
+| $3,000 starting cash | Economy inflates 27%; credit used in only 30% of games |
+| $3,500 starting cash | Peak table debt $158. The financial layer never activates |
+| $2,000 starting cash | Breaks the draft — the table cannot clear 28 deeds |
+| Era II stimulus as a grant | $1,200 of permanent inflation; Treasury recovers 2% of outlay |
+
+### Why the game is 24 rounds
+
+The round count is a constraint, not a preference. Simulated at 36 rounds, player
+bankruptcy reaches 43% under the earlier configuration and 82% under this one. The
+cause is Era IV's open-ended 12% rate tier: a 24-round game spends six rounds there,
+a 36-round game spends eighteen.
+
+**24 rounds is near the maximum this rate curve supports.** A longer format would
+require capping Era IV at 8–10% and giving the Treasury a spending mechanism. The
+carrying cost is not what would need to change.
+
+### Known open item: development suppression
+
+Under this configuration players build roughly 22% fewer houses (15.2 versus 19.5),
+purely because they hold less cash — buildings are already exempt from the carrying
+cost and count 50% toward the borrowing base.
+
+The simulation's builder heuristic is not carrying-cost-aware, so a thinking player
+would likely under-build further, meaning this figure understates the effect. Fewer
+houses means lower rents, which flattens the rent futures market the design depends on.
+
+A building subsidy is the likely remedy and is under test. This is the one economic
+parameter not yet settled; it is isolated in the config module and affects no
+interface.
