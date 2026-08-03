@@ -1,0 +1,242 @@
+[
+  {
+    "index": 0,
+    "name": "Go",
+    "group": null,
+    "probability": 0.030961230334104212
+  },
+  {
+    "index": 1,
+    "name": "Mediterranean Avenue",
+    "group": "brown",
+    "probability": 0.021313773374645562
+  },
+  {
+    "index": 2,
+    "name": "Community Chest 1",
+    "group": null,
+    "probability": 0.018848800052371693
+  },
+  {
+    "index": 3,
+    "name": "Baltic Avenue",
+    "group": "brown",
+    "probability": 0.021624021895353694
+  },
+  {
+    "index": 4,
+    "name": "Income Tax",
+    "group": null,
+    "probability": 0.02328523018961238
+  },
+  {
+    "index": 5,
+    "name": "Reading Railroad",
+    "group": "railroad",
+    "probability": 0.029631032008512283
+  },
+  {
+    "index": 6,
+    "name": "Oriental Avenue",
+    "group": "light blue",
+    "probability": 0.0226213967889301
+  },
+  {
+    "index": 7,
+    "name": "Chance 1",
+    "group": null,
+    "probability": 0.008650478139361506
+  },
+  {
+    "index": 8,
+    "name": "Vermont Avenue",
+    "group": "light blue",
+    "probability": 0.023209601712151747
+  },
+  {
+    "index": 9,
+    "name": "Connecticut Avenue",
+    "group": "light blue",
+    "probability": 0.023003350088667763
+  },
+  {
+    "index": 10,
+    "name": "Jail / Just Visiting",
+    "group": null,
+    "probability": 0.06219514681975518
+  },
+  {
+    "index": 11,
+    "name": "St. Charles Place",
+    "group": "pink",
+    "probability": 0.02701657817770987
+  },
+  {
+    "index": 12,
+    "name": "Electric Company",
+    "group": "utility",
+    "probability": 0.026040375217150996
+  },
+  {
+    "index": 13,
+    "name": "States Avenue",
+    "group": "pink",
+    "probability": 0.023720902925907398
+  },
+  {
+    "index": 14,
+    "name": "Virginia Avenue",
+    "group": "pink",
+    "probability": 0.024648884255086746
+  },
+  {
+    "index": 15,
+    "name": "Pennsylvania Railroad",
+    "group": "railroad",
+    "probability": 0.029199693352507952
+  },
+  {
+    "index": 16,
+    "name": "St. James Place",
+    "group": "orange",
+    "probability": 0.027924168535581603
+  },
+  {
+    "index": 17,
+    "name": "Community Chest 2",
+    "group": null,
+    "probability": 0.025944648434074305
+  },
+  {
+    "index": 18,
+    "name": "Tennessee Avenue",
+    "group": "orange",
+    "probability": 0.02935585459509693
+  },
+  {
+    "index": 19,
+    "name": "New York Avenue",
+    "group": "orange",
+    "probability": 0.03085168877835797
+  },
+  {
+    "index": 20,
+    "name": "Free Parking",
+    "group": null,
+    "probability": 0.028836012851659022
+  },
+  {
+    "index": 21,
+    "name": "Kentucky Avenue",
+    "group": "red",
+    "probability": 0.028358431390015256
+  },
+  {
+    "index": 22,
+    "name": "Chance 2",
+    "group": null,
+    "probability": 0.01048032937331527
+  },
+  {
+    "index": 23,
+    "name": "Indiana Avenue",
+    "group": "red",
+    "probability": 0.027356858038021903
+  },
+  {
+    "index": 24,
+    "name": "Illinois Avenue",
+    "group": "red",
+    "probability": 0.03185766286654982
+  },
+  {
+    "index": 25,
+    "name": "B&O Railroad",
+    "group": "railroad",
+    "probability": 0.03065904738653009
+  },
+  {
+    "index": 26,
+    "name": "Atlantic Avenue",
+    "group": "yellow",
+    "probability": 0.0270720382463596
+  },
+  {
+    "index": 27,
+    "name": "Ventnor Avenue",
+    "group": "yellow",
+    "probability": 0.02678857694427635
+  },
+  {
+    "index": 28,
+    "name": "Water Works",
+    "group": "utility",
+    "probability": 0.028074183829090747
+  },
+  {
+    "index": 29,
+    "name": "Marvin Gardens",
+    "group": "yellow",
+    "probability": 0.025860488874876537
+  },
+  {
+    "index": 30,
+    "name": "Go To Jail",
+    "group": null,
+    "probability": 0.0
+  },
+  {
+    "index": 31,
+    "name": "Pacific Avenue",
+    "group": "green",
+    "probability": 0.02677370475281735
+  },
+  {
+    "index": 32,
+    "name": "North Carolina Avenue",
+    "group": "green",
+    "probability": 0.026251730101095334
+  },
+  {
+    "index": 33,
+    "name": "Community Chest 3",
+    "group": null,
+    "probability": 0.02366054880846035
+  },
+  {
+    "index": 34,
+    "name": "Pennsylvania Avenue",
+    "group": "green",
+    "probability": 0.02500628007466052
+  },
+  {
+    "index": 35,
+    "name": "Short Line",
+    "group": "railroad",
+    "probability": 0.02432637982706022
+  },
+  {
+    "index": 36,
+    "name": "Chance 3",
+    "group": null,
+    "probability": 0.008668733545006035
+  },
+  {
+    "index": 37,
+    "name": "Park Place",
+    "group": "dark blue",
+    "probability": 0.021863976221719383
+  },
+  {
+    "index": 38,
+    "name": "Luxury Tax",
+    "group": null,
+    "probability": 0.021798527663545533
+  },
+  {
+    "index": 39,
+    "name": "Boardwalk",
+    "group": "dark blue",
+    "probability": 0.02625963353000079
+  }
+]
