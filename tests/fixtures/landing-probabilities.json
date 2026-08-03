@@ -3,240 +3,320 @@
     "index": 0,
     "name": "Go",
     "group": null,
-    "probability": 0.030961230334104212
+    "probability": 0.022775372864711388,
+    "probability_v1": 0.030961230334104212,
+    "delta": -0.008185857469392824
   },
   {
     "index": 1,
     "name": "Mediterranean Avenue",
     "group": "brown",
-    "probability": 0.021313773374645562
+    "probability": 0.022911447689548132,
+    "probability_v1": 0.021313773374645562,
+    "delta": 0.0015976743149025696
   },
   {
     "index": 2,
     "name": "Community Chest 1",
     "group": null,
-    "probability": 0.018848800052371693
+    "probability": 0.023129184391802896,
+    "probability_v1": 0.018848800052371693,
+    "delta": 0.0042803843394312036
   },
   {
     "index": 3,
     "name": "Baltic Avenue",
     "group": "brown",
-    "probability": 0.021624021895353694
+    "probability": 0.023338928583297926,
+    "probability_v1": 0.021624021895353694,
+    "delta": 0.0017149066879442315
   },
   {
     "index": 4,
     "name": "Income Tax",
     "group": null,
-    "probability": 0.02328523018961238
+    "probability": 0.022980120677362704,
+    "probability_v1": 0.02328523018961238,
+    "delta": -0.00030510951224967456
   },
   {
     "index": 5,
     "name": "Reading Railroad",
     "group": "railroad",
-    "probability": 0.029631032008512283
+    "probability": 0.022749488439732506,
+    "probability_v1": 0.029631032008512283,
+    "delta": -0.006881543568779777
   },
   {
     "index": 6,
     "name": "Oriental Avenue",
     "group": "light blue",
-    "probability": 0.0226213967889301
+    "probability": 0.022690669444033713,
+    "probability_v1": 0.0226213967889301,
+    "delta": 6.927265510361241e-05
   },
   {
     "index": 7,
     "name": "Chance 1",
     "group": null,
-    "probability": 0.008650478139361506
+    "probability": 0.02266470685712445,
+    "probability_v1": 0.008650478139361506,
+    "delta": 0.014014228717762945
   },
   {
     "index": 8,
     "name": "Vermont Avenue",
     "group": "light blue",
-    "probability": 0.023209601712151747
+    "probability": 0.022734717165744253,
+    "probability_v1": 0.023209601712151747,
+    "delta": -0.000474884546407494
   },
   {
     "index": 9,
     "name": "Connecticut Avenue",
     "group": "light blue",
-    "probability": 0.023003350088667763
+    "probability": 0.022774049997568917,
+    "probability_v1": 0.023003350088667763,
+    "delta": -0.00022930009109884547
   },
   {
     "index": 10,
     "name": "Jail / Just Visiting",
     "group": null,
-    "probability": 0.06219514681975518
+    "probability": 0.05330463193891725,
+    "probability_v1": 0.06219514681975518,
+    "delta": -0.008890514880837933
   },
   {
     "index": 11,
     "name": "St. Charles Place",
     "group": "pink",
-    "probability": 0.02701657817770987
+    "probability": 0.02280870007453684,
+    "probability_v1": 0.02701657817770987,
+    "delta": -0.004207878103173031
   },
   {
     "index": 12,
     "name": "Electric Company",
     "group": "utility",
-    "probability": 0.026040375217150996
+    "probability": 0.02363912677072868,
+    "probability_v1": 0.026040375217150996,
+    "delta": -0.0024012484464223174
   },
   {
     "index": 13,
     "name": "States Avenue",
     "group": "pink",
-    "probability": 0.023720902925907398
+    "probability": 0.024431056598025802,
+    "probability_v1": 0.023720902925907398,
+    "delta": 0.0007101536721184042
   },
   {
     "index": 14,
     "name": "Virginia Avenue",
     "group": "pink",
-    "probability": 0.024648884255086746
+    "probability": 0.0252820217369107,
+    "probability_v1": 0.024648884255086746,
+    "delta": 0.0006331374818239546
   },
   {
     "index": 15,
     "name": "Pennsylvania Railroad",
     "group": "railroad",
-    "probability": 0.029199693352507952
+    "probability": 0.026162912246154975,
+    "probability_v1": 0.029199693352507952,
+    "delta": -0.0030367811063529773
   },
   {
     "index": 16,
     "name": "St. James Place",
     "group": "orange",
-    "probability": 0.027924168535581603
+    "probability": 0.02714561610415361,
+    "probability_v1": 0.027924168535581603,
+    "delta": -0.0007785524314279924
   },
   {
     "index": 17,
     "name": "Community Chest 2",
     "group": null,
-    "probability": 0.025944648434074305
+    "probability": 0.028223728803595336,
+    "probability_v1": 0.025944648434074305,
+    "delta": 0.002279080369521031
   },
   {
     "index": 18,
     "name": "Tennessee Avenue",
     "group": "orange",
-    "probability": 0.02935585459509693
+    "probability": 0.027742798184821876,
+    "probability_v1": 0.02935585459509693,
+    "delta": -0.0016130564102750551
   },
   {
     "index": 19,
     "name": "New York Avenue",
     "group": "orange",
-    "probability": 0.03085168877835797
+    "probability": 0.027404806847557323,
+    "probability_v1": 0.03085168877835797,
+    "delta": -0.0034468819308006472
   },
   {
     "index": 20,
     "name": "Free Parking",
     "group": null,
-    "probability": 0.028836012851659022
+    "probability": 0.027155832033743364,
+    "probability_v1": 0.028836012851659022,
+    "delta": -0.0016801808179156587
   },
   {
     "index": 21,
     "name": "Kentucky Avenue",
     "group": "red",
-    "probability": 0.028358431390015256
+    "probability": 0.026942956375485185,
+    "probability_v1": 0.028358431390015256,
+    "delta": -0.001415475014530071
   },
   {
     "index": 22,
     "name": "Chance 2",
     "group": null,
-    "probability": 0.01048032937331527
+    "probability": 0.02670431279975751,
+    "probability_v1": 0.01048032937331527,
+    "delta": 0.01622398342644224
   },
   {
     "index": 23,
     "name": "Indiana Avenue",
     "group": "red",
-    "probability": 0.027356858038021903
+    "probability": 0.02640407136479488,
+    "probability_v1": 0.027356858038021903,
+    "delta": -0.0009527866732270233
   },
   {
     "index": 24,
     "name": "Illinois Avenue",
     "group": "red",
-    "probability": 0.03185766286654982
+    "probability": 0.026802806179766464,
+    "probability_v1": 0.03185766286654982,
+    "delta": -0.005054856686783356
   },
   {
     "index": 25,
     "name": "B&O Railroad",
     "group": "railroad",
-    "probability": 0.03065904738653009
+    "probability": 0.027019770922786894,
+    "probability_v1": 0.03065904738653009,
+    "delta": -0.003639276463743197
   },
   {
     "index": 26,
     "name": "Atlantic Avenue",
     "group": "yellow",
-    "probability": 0.0270720382463596
+    "probability": 0.027072912199327236,
+    "probability_v1": 0.0270720382463596,
+    "delta": 8.73952967637287e-07
   },
   {
     "index": 27,
     "name": "Ventnor Avenue",
     "group": "yellow",
-    "probability": 0.02678857694427635
+    "probability": 0.027060348339739436,
+    "probability_v1": 0.02678857694427635,
+    "delta": 0.0002717713954630864
   },
   {
     "index": 28,
     "name": "Water Works",
     "group": "utility",
-    "probability": 0.028074183829090747
+    "probability": 0.026963223084510313,
+    "probability_v1": 0.028074183829090747,
+    "delta": -0.0011109607445804331
   },
   {
     "index": 29,
     "name": "Marvin Gardens",
     "group": "yellow",
-    "probability": 0.025860488874876537
+    "probability": 0.026879909249950346,
+    "probability_v1": 0.025860488874876537,
+    "delta": 0.0010194203750738089
   },
   {
     "index": 30,
     "name": "Go To Jail",
     "group": null,
-    "probability": 0.0
+    "probability": 0.0,
+    "probability_v1": 0.0,
+    "delta": 0.0
   },
   {
     "index": 31,
     "name": "Pacific Avenue",
     "group": "green",
-    "probability": 0.02677370475281735
+    "probability": 0.026783234994586496,
+    "probability_v1": 0.02677370475281735,
+    "delta": 9.530241769147019e-06
   },
   {
     "index": 32,
     "name": "North Carolina Avenue",
     "group": "green",
-    "probability": 0.026251730101095334
+    "probability": 0.02605061723461487,
+    "probability_v1": 0.026251730101095334,
+    "delta": -0.0002011128664804636
   },
   {
     "index": 33,
     "name": "Community Chest 3",
     "group": null,
-    "probability": 0.02366054880846035
+    "probability": 0.025317317115886077,
+    "probability_v1": 0.02366054880846035,
+    "delta": 0.0016567683074257267
   },
   {
     "index": 34,
     "name": "Pennsylvania Avenue",
     "group": "green",
-    "probability": 0.02500628007466052
+    "probability": 0.02456745729257193,
+    "probability_v1": 0.02500628007466052,
+    "delta": -0.00043882278208859024
   },
   {
     "index": 35,
     "name": "Short Line",
     "group": "railroad",
-    "probability": 0.02432637982706022
+    "probability": 0.023751664715033354,
+    "probability_v1": 0.02432637982706022,
+    "delta": -0.0005747151120268669
   },
   {
     "index": 36,
     "name": "Chance 3",
     "group": null,
-    "probability": 0.008668733545006035
+    "probability": 0.022882828521216553,
+    "probability_v1": 0.008668733545006035,
+    "delta": 0.014214094976210519
   },
   {
     "index": 37,
     "name": "Park Place",
     "group": "dark blue",
-    "probability": 0.021863976221719383
+    "probability": 0.021886967749319777,
+    "probability_v1": 0.021863976221719383,
+    "delta": 2.2991527600393913e-05
   },
   {
     "index": 38,
     "name": "Luxury Tax",
     "group": null,
-    "probability": 0.021798527663545533
+    "probability": 0.022306253305806642,
+    "probability_v1": 0.021798527663545533,
+    "delta": 0.0005077256422611094
   },
   {
     "index": 39,
     "name": "Boardwalk",
     "group": "dark blue",
-    "probability": 0.02625963353000079
+    "probability": 0.02255343110477345,
+    "probability_v1": 0.02625963353000079,
+    "delta": -0.0037062024252273416
   }
 ]

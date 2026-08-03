@@ -1,43 +1,62 @@
 #!/usr/bin/env python3
 """
-Exact steady-state landing probabilities for the standard US Monopoly board.
+Exact steady-state landing probabilities for the LEVERAGE board (v2).
 
 Design-validation analysis (not project implementation).
 
-Model
------
-* Markov chain over an expanded state space (square, consecutive_doubles) with
-  40 x 3 = 120 states. `consecutive_doubles` is the number of doubles rolled
-  so far in the current turn (0, 1 or 2). Rolling a third consecutive double
-  sends the player straight to Jail without moving.
-* Dice: two fair six-sided dice, exact 2d6 distribution over the 36 ordered
-  outcomes (doubles tracked separately, so we enumerate all 36 pairs).
-* Square 30 ("Go To Jail") sends the player to square 10.
-* Chance (7, 22, 36): 16-card deck, 10 cards move the player.
-* Community Chest (2, 17, 33): 16-card deck, 2 cards move the player.
-* Card destinations are resolved recursively, so "Go Back 3 Spaces" from
-  square 36 lands on Community Chest (33) and a Community Chest card is then
-  drawn.
-* A step of the chain is ONE DIE ROLL, and the probability reported for a
-  square is the probability that a roll ends with the token resting there.
-  Squares merely passed through (including a Chance/Community Chest square
-  that immediately moves you elsewhere) are not counted as landings.
+WHAT CHANGED FROM v1
+--------------------
+v1 modelled the standard physical Chance and Community Chest decks: 16 Chance
+cards of which 10 relocate the token, and 16 Community Chest cards of which 2
+relocate the token, with recursive destination resolution.
 
-JAIL ASSUMPTION
----------------
-The common "pay to get out immediately" convention is modelled: a player sent
-to Jail pays the fine (or uses a card) at once and leaves on the very next
-turn. Jail therefore behaves exactly like an ordinary square for movement
-purposes -- you always roll out of it on your next roll -- but arriving in Jail
-resets the consecutive-doubles counter to 0 and ends the current turn. Square
-10 aggregates "In Jail" and "Just Visiting"; square 30 has probability 0
-because it is never a resting place.
+LEVERAGE does not use the physical cards. They are replaced by four app-drawn
+era decks of 20 cards each (docs/reference/era-decks.md), which contain
+financial and state-referencing effects ONLY. The cross-deck summary in that
+document records "Movement cards: 0" for every era, and no card in any of the
+80 authored cards relocates a token. (E3-05 privately reveals and reorders the
+top of the deck; it moves no player.)
 
-Outputs (written next to this script): landing_probs.json, landing_probs.md
+Consequently squares 2, 7, 17, 22, 33 and 36 are now ORDINARY TERMINAL RESTING
+SQUARES. A player landing there draws a card that affects money, credit, Heat
+or instruments, and stays put.
+
+*** THE PUBLISHED MONOPOLY REFERENCE TABLES NO LONGER APPLY. ***
+Every widely cited landing-probability table (Illinois Ave 3.19%, Jail 6.2%,
+GO 3.10%, and so on) assumes the standard card decks. Those figures are not
+valid for this board and must not be used to validate this model. The
+verification here is therefore self-contained: an independent linear solve, an
+independent Monte Carlo simulation, and a structural decomposition of Jail.
+
+WHAT IS UNCHANGED FROM v1
+-------------------------
+* Exact 2d6 distribution over the 36 ordered outcomes.
+* Three consecutive doubles sends the player to Jail without moving.
+* Square 30 ("Go To Jail") still sends the player to Jail and is still never a
+  resting square.
+* One step of the chain is ONE DIE ROLL; the reported probability is that a
+  roll ends with the token resting on that square.
+* State space (square, consecutive_doubles) with 40 x 3 = 120 states.
+
+JAIL RULE
+---------
+A player sent to Jail pays the fine and leaves on their next turn. Rolling for
+doubles to escape is NOT offered by the ruleset. In v1 this was a modelling
+assumption chosen to match the common house convention; in v2 it is a
+MANDATORY RULE of the game. The spec and the model now agree by construction
+rather than by coincidence. Arriving in Jail still ends the turn and resets the
+consecutive-doubles counter. Square 10 aggregates "In Jail" and "Just
+Visiting".
+
+Outputs: landing_probs_v2.json, landing_probs_v2.md
+Usage:   python3 landing_probs_v2.py [--mc N]
 """
 
 import json
 import os
+import random
+import sys
+import time
 
 # --------------------------------------------------------------------------
 # Board definition
@@ -89,10 +108,10 @@ BOARD = [
 N = 40
 JAIL = 10
 GO_TO_JAIL = 30
-CHANCE_SQUARES = (7, 22, 36)
-CHEST_SQUARES = (2, 17, 33)
-RAILROADS = (5, 15, 25, 35)
-UTILITIES = (12, 28)
+
+# Card squares. In v2 these are ordinary resting squares: a card is drawn from
+# the current era deck, but the token does not move.
+CARD_SQUARES = (2, 7, 17, 22, 33, 36)
 
 COLOR_GROUPS = [
     "brown", "light blue", "pink", "orange",
@@ -100,87 +119,23 @@ COLOR_GROUPS = [
     "railroad", "utility",
 ]
 GROUP_LABELS = {
-    "brown": "Brown",
-    "light blue": "Light Blue",
-    "pink": "Pink",
-    "orange": "Orange",
-    "red": "Red",
-    "yellow": "Yellow",
-    "green": "Green",
-    "dark blue": "Dark Blue",
-    "railroad": "Railroads",
-    "utility": "Utilities",
+    "brown": "Brown", "light blue": "Light Blue", "pink": "Pink",
+    "orange": "Orange", "red": "Red", "yellow": "Yellow",
+    "green": "Green", "dark blue": "Dark Blue",
+    "railroad": "Railroads", "utility": "Utilities",
 }
 
-DECK_SIZE = 16
-
-
-def nearest_railroad(sq):
-    """First railroad square strictly ahead of `sq` (wrapping)."""
-    for step in range(1, N + 1):
-        cand = (sq + step) % N
-        if cand in RAILROADS:
-            return cand
-    raise AssertionError("unreachable")
-
-
-def nearest_utility(sq):
-    """First utility square strictly ahead of `sq` (wrapping)."""
-    for step in range(1, N + 1):
-        cand = (sq + step) % N
-        if cand in UTILITIES:
-            return cand
-    raise AssertionError("unreachable")
-
 
 # --------------------------------------------------------------------------
-# Square resolution: where does a token that lands on `sq` finally rest?
-# Returns {(final_square, jailed_flag): probability}. `jailed_flag` is True
-# when the player was SENT to jail (turn over, doubles counter reset) as
-# opposed to merely visiting square 10.
+# Square resolution. The ONLY relocating square left on the board is 30.
+# Returns (final_square, jailed_flag). `jailed_flag` distinguishes being SENT
+# to Jail (turn over, doubles counter reset) from merely resting on square 10.
 # --------------------------------------------------------------------------
 
-def resolve(sq, depth=0):
-    if depth > 4:                       # safety net; never triggered in practice
-        return {(sq, False): 1.0}
-
-    out = {}
-
-    def add(key, prob):
-        out[key] = out.get(key, 0.0) + prob
-
-    def add_dest(dest, prob, dep):
-        for k, v in resolve(dest, dep).items():
-            add(k, prob * v)
-
+def resolve(sq):
     if sq == GO_TO_JAIL:
-        add((JAIL, True), 1.0)
-        return out
-
-    if sq in CHANCE_SQUARES:
-        p = 1.0 / DECK_SIZE
-        # 6 of 16 cards do not move the player
-        add((sq, False), 6 * p)
-        add_dest(0, p, depth + 1)                      # Advance to Go
-        add_dest(24, p, depth + 1)                     # Advance to Illinois Ave
-        add_dest(11, p, depth + 1)                     # Advance to St. Charles Pl
-        add_dest(5, p, depth + 1)                      # Advance to Reading RR
-        add_dest(39, p, depth + 1)                     # Advance to Boardwalk
-        add((JAIL, True), p)                           # Go directly to Jail
-        add_dest(nearest_utility(sq), p, depth + 1)    # Nearest Utility
-        add_dest(nearest_railroad(sq), 2 * p, depth + 1)  # Nearest Railroad (x2)
-        add_dest((sq - 3) % N, p, depth + 1)           # Go Back 3 Spaces
-        return out
-
-    if sq in CHEST_SQUARES:
-        p = 1.0 / DECK_SIZE
-        add((sq, False), 14 * p)                       # 14 of 16 cards: no move
-        add_dest(0, p, depth + 1)                      # Advance to Go
-        add((JAIL, True), p)                           # Go directly to Jail
-        return out
-
-    add((sq, False), 1.0)
-    return out
+        return JAIL, True
+    return sq, False
 
 
 # --------------------------------------------------------------------------
@@ -196,39 +151,34 @@ def sidx(sq, d):
 
 
 def build_transition():
-    """P[i][j] = P(next state j | current state i), one die roll per step."""
+    """P[i][j] = P(next state j | current state i); one die roll per step."""
     P = [[0.0] * NUM_STATES for _ in range(NUM_STATES)]
     roll_p = 1.0 / 36.0
-
-    # Pre-resolve every landing square once.
-    resolved = {sq: resolve(sq) for sq in range(N)}
 
     for sq in range(N):
         for d in range(NUM_D):
             i = sidx(sq, d)
             for die1 in range(1, 7):
                 for die2 in range(1, 7):
-                    total = die1 + die2
                     is_double = die1 == die2
 
-                    # Third consecutive double -> straight to Jail, no move.
+                    # Third consecutive double -> Jail, no movement.
                     if is_double and d == 2:
                         P[i][sidx(JAIL, 0)] += roll_p
                         continue
 
-                    raw = (sq + total) % N
-                    for (dest, jailed), prob in resolved[raw].items():
-                        nd = 0 if jailed else (d + 1 if is_double else 0)
-                        P[i][sidx(dest, nd)] += roll_p * prob
+                    raw = (sq + die1 + die2) % N
+                    dest, jailed = resolve(raw)
+                    nd = 0 if jailed else (d + 1 if is_double else 0)
+                    P[i][sidx(dest, nd)] += roll_p
     return P
 
 
 # --------------------------------------------------------------------------
-# Stationary distribution
+# Stationary distribution: two independent solvers
 # --------------------------------------------------------------------------
 
 def power_iteration(P, tol=1e-15, max_iter=200000):
-    """Pure-Python power iteration on the row-stochastic matrix P."""
     n = len(P)
     pi = [1.0 / n] * n
     for it in range(max_iter):
@@ -249,14 +199,49 @@ def power_iteration(P, tol=1e-15, max_iter=200000):
     return pi, it + 1
 
 
-def jail_decomposition(P, pi):
-    """Break the Jail probability down by how the player arrived there."""
-    resolved = {sq: resolve(sq) for sq in range(N)}
+def numpy_solve(P):
+    """Exact linear solve of pi (P - I) = 0 subject to sum(pi) = 1."""
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    M = np.array(P, dtype=float)
+    n = M.shape[0]
+    A = np.vstack([M.T - np.eye(n), np.ones(n)])
+    b = np.zeros(n + 1)
+    b[-1] = 1.0
+    pi, *_ = np.linalg.lstsq(A, b, rcond=None)
+    return pi.tolist()
+
+
+def monte_carlo(n_rolls, seed=20260803):
+    """Independent simulation of the same rules; returns per-square frequency."""
+    rng = random.Random(seed)
+    counts = [0] * N
+    pos = 0
+    d = 0
+    randint = rng.randint
+    for _ in range(n_rolls):
+        a = randint(1, 6)
+        b = randint(1, 6)
+        if a == b and d == 2:
+            pos, d = JAIL, 0
+        else:
+            raw = (pos + a + b) % N
+            if raw == GO_TO_JAIL:
+                pos, d = JAIL, 0
+            else:
+                pos = raw
+                d = d + 1 if a == b else 0
+        counts[pos] += 1
+    return [c / n_rolls for c in counts]
+
+
+def jail_decomposition(pi):
+    """Break the Jail probability down by arrival route."""
     src = {
         "Dice onto square 10 (Just Visiting)": 0.0,
         "Square 30 (Go To Jail)": 0.0,
-        "Chance 'Go directly to Jail'": 0.0,
-        "Community Chest 'Go directly to Jail'": 0.0,
         "Third consecutive double": 0.0,
     }
     for sq in range(N):
@@ -275,72 +260,65 @@ def jail_decomposition(P, pi):
                         src["Dice onto square 10 (Just Visiting)"] += p
                     elif raw == GO_TO_JAIL:
                         src["Square 30 (Go To Jail)"] += p
-                    elif raw in CHANCE_SQUARES:
-                        src["Chance 'Go directly to Jail'"] += \
-                            p * resolved[raw].get((JAIL, True), 0.0)
-                    elif raw in CHEST_SQUARES:
-                        src["Community Chest 'Go directly to Jail'"] += \
-                            p * resolved[raw].get((JAIL, True), 0.0)
     return src
-
-
-def numpy_solve(P):
-    """Exact linear solve of pi (P - I) = 0 with sum(pi) = 1, if numpy exists."""
-    try:
-        import numpy as np
-    except ImportError:
-        return None
-    M = np.array(P, dtype=float)
-    n = M.shape[0]
-    A = (M.T - np.eye(n))
-    A = np.vstack([A, np.ones(n)])
-    b = np.zeros(n + 1)
-    b[-1] = 1.0
-    pi, *_ = np.linalg.lstsq(A, b, rcond=None)
-    return pi.tolist()
 
 
 # --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
 
-def main():
+def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
 
-    P = build_transition()
+    n_mc = 40_000_000
+    if "--mc" in argv:
+        n_mc = int(argv[argv.index("--mc") + 1])
 
-    # Row-stochastic sanity check
+    P = build_transition()
     for i, row in enumerate(P):
         assert abs(sum(row) - 1.0) < 1e-12, f"row {i} sums to {sum(row)}"
 
     pi_states, iters = power_iteration(P)
     pi_np = numpy_solve(P)
+    max_dev = (max(abs(a - b) for a, b in zip(pi_states, pi_np))
+               if pi_np is not None else None)
 
-    if pi_np is not None:
-        max_dev = max(abs(a - b) for a, b in zip(pi_states, pi_np))
-    else:
-        max_dev = None
-
-    # Marginalise over the doubles counter.
-    square_p = [0.0] * N
-    for sq in range(N):
-        for d in range(NUM_D):
-            square_p[sq] += pi_states[sidx(sq, d)]
-
+    square_p = [sum(pi_states[sidx(sq, d)] for d in range(NUM_D))
+                for sq in range(N)]
     total = sum(square_p)
-    jail_src = jail_decomposition(P, pi_states)
+    jail_src = jail_decomposition(pi_states)
+
+    t0 = time.time()
+    mc = monte_carlo(n_mc) if n_mc > 0 else None
+    mc_secs = time.time() - t0
+    mc_worst = mc_worst_sq = None
+    if mc is not None:
+        devs = [(abs(square_p[i] - mc[i]), i) for i in range(N)]
+        mc_worst, mc_worst_sq = max(devs)
+
+    # ---------------- v1 comparison ----------------
+    v1_path = os.path.join(here, "landing_probs.json")
+    v1 = None
+    if os.path.exists(v1_path):
+        with open(v1_path) as fh:
+            v1 = {r["index"]: r["probability"] for r in json.load(fh)}
 
     # ---------------- JSON ----------------
-    records = [
-        {"index": idx, "name": name, "group": group, "probability": square_p[idx]}
-        for idx, name, group in BOARD
-    ]
-    json_path = os.path.join(here, "landing_probs.json")
+    records = []
+    for idx, name, group in BOARD:
+        rec = {"index": idx, "name": name, "group": group,
+               "probability": square_p[idx]}
+        if v1 is not None:
+            rec["probability_v1"] = v1[idx]
+            rec["delta"] = square_p[idx] - v1[idx]
+        records.append(rec)
+
+    json_path = os.path.join(here, "landing_probs_v2.json")
     with open(json_path, "w") as fh:
         json.dump(records, fh, indent=2)
         fh.write("\n")
 
-    # ---------------- Color groups ----------------
+    # ---------------- groups ----------------
     group_totals = {g: 0.0 for g in COLOR_GROUPS}
     group_members = {g: [] for g in COLOR_GROUPS}
     for idx, name, group in BOARD:
@@ -348,207 +326,366 @@ def main():
             group_totals[group] += square_p[idx]
             group_members[group].append(idx)
 
-    # ---------------- Markdown ----------------
+    v1_group_totals = None
+    if v1 is not None:
+        v1_group_totals = {g: 0.0 for g in COLOR_GROUPS}
+        for idx, name, group in BOARD:
+            if group in v1_group_totals:
+                v1_group_totals[group] += v1[idx]
+
+    props = [r for r in records if r["group"] is not None]
+    hi = max(props, key=lambda r: r["probability"])
+    lo = min(props, key=lambda r: r["probability"])
+    spread = hi["probability"] - lo["probability"]
+    ratio = hi["probability"] / lo["probability"]
+
+    v1_spread = v1_ratio = v1_hi = v1_lo = None
+    if v1 is not None:
+        v1_props = [(v1[r["index"]], r["name"]) for r in props]
+        v1_hi = max(v1_props)
+        v1_lo = min(v1_props)
+        v1_spread = v1_hi[0] - v1_lo[0]
+        v1_ratio = v1_hi[0] / v1_lo[0]
+
+    monopolies = ["brown", "light blue", "pink", "orange",
+                  "red", "yellow", "green", "dark blue"]
+    per_sq = {g: group_totals[g] / len(group_members[g]) for g in COLOR_GROUPS}
+    best_mono = max(monopolies, key=lambda g: per_sq[g])
+    best_set_total = max(COLOR_GROUPS, key=lambda g: group_totals[g])
+
     ordered = sorted(records, key=lambda r: -r["probability"])
-    lines = []
-    lines.append("# Monopoly Steady-State Landing Probabilities")
-    lines.append("")
-    lines.append("Exact stationary distribution of a Markov chain over "
-                 "`(square, consecutive_doubles)` (40 x 3 = 120 states). "
-                 "One step = one die roll; the probability is that a roll ends "
-                 "with the token resting on that square.")
-    lines.append("")
-    lines.append("## Modelling assumptions")
-    lines.append("")
-    lines.append("- **Jail: \"pay to get out immediately\".** A player sent to "
-                 "Jail pays the fine (or uses a Get Out of Jail Free card) at "
-                 "once and leaves on the very next turn. Jail is therefore "
-                 "never a multi-turn absorbing delay. Arriving in Jail still "
-                 "ends the turn and resets the consecutive-doubles counter.")
-    lines.append("- Square 10 aggregates \"In Jail\" and \"Just Visiting\".")
-    lines.append("- Square 30 (\"Go To Jail\") has probability 0: it is never a "
-                 "resting square.")
-    lines.append("- Two fair d6, exact 2d6 distribution over 36 ordered outcomes.")
-    lines.append("- Three consecutive doubles sends the player to Jail without "
-                 "moving.")
-    lines.append("- Chance: 16 cards, 10 of which move the player. "
-                 "Community Chest: 16 cards, 2 of which move the player. "
-                 "Decks are modelled as drawn with replacement (well-shuffled).")
-    lines.append("- Card destinations are resolved recursively: \"Go Back 3 "
-                 "Spaces\" from square 36 lands on Community Chest (33), and a "
-                 "Community Chest card is then drawn.")
-    lines.append("- Squares merely passed through -- including a Chance / "
-                 "Community Chest square that immediately moves you elsewhere "
-                 "-- are not counted as landings.")
-    lines.append("")
-    lines.append("## All 40 squares, by probability (descending)")
-    lines.append("")
-    lines.append("| Rank | Square | Name | Group | Probability | % |")
-    lines.append("| ---: | ---: | --- | --- | ---: | ---: |")
-    for rank, r in enumerate(ordered, 1):
-        grp = GROUP_LABELS.get(r["group"], "-")
-        lines.append(
-            f"| {rank} | {r['index']} | {r['name']} | {grp} | "
-            f"{r['probability']:.6f} | {r['probability'] * 100:.4f}% |"
-        )
-    lines.append("")
-    lines.append(f"**Total: {total:.12f}**")
-    lines.append("")
-    lines.append("## Aggregate probability by color group")
-    lines.append("")
-    lines.append("| Group | Squares | Total probability | % | Per-square avg % |")
-    lines.append("| --- | --- | ---: | ---: | ---: |")
-    for g in COLOR_GROUPS:
-        members = group_members[g]
-        tot = group_totals[g]
-        lines.append(
-            f"| {GROUP_LABELS[g]} | {', '.join(str(m) for m in members)} | "
-            f"{tot:.6f} | {tot * 100:.4f}% | "
-            f"{tot * 100 / len(members):.4f}% |"
-        )
-    lines.append("")
+
+    # ---------------- Markdown ----------------
+    L = []
+    L.append("# LEVERAGE Landing Probabilities (v2 - no movement cards)")
+    L.append("")
+    L.append("Exact stationary distribution of a Markov chain over "
+             "`(square, consecutive_doubles)` (40 x 3 = 120 states). "
+             "One step = one die roll; the probability is that a roll ends "
+             "with the token resting on that square.")
+    L.append("")
+    L.append("## Why this supersedes v1")
+    L.append("")
+    L.append("v1 modelled the standard physical decks (10 of 16 Chance cards "
+             "and 2 of 16 Community Chest cards relocate the token). "
+             "LEVERAGE does not use those cards. The four authored era decks "
+             "(`docs/reference/era-decks.md`) contain financial and "
+             "state-referencing effects only; the cross-deck summary records "
+             "**Movement cards: 0** for every era.")
+    L.append("")
+    L.append("Squares 2, 7, 17, 22, 33 and 36 are therefore **ordinary "
+             "terminal resting squares**. A player landing there draws an era "
+             "card that affects money, credit, Heat or instruments, and stays "
+             "put.")
+    L.append("")
+    L.append("> **The published Monopoly reference tables no longer apply.** "
+             "Every widely cited landing-probability table (Illinois Ave "
+             "3.19%, Jail 6.2%, GO 3.10%) assumes the standard card decks. "
+             "Those figures are not valid for this board and must not be used "
+             "to validate this model. Verification below is self-contained.")
+    L.append("")
+    L.append("## Rules modelled")
+    L.append("")
+    L.append("- Two fair d6, exact 2d6 distribution over 36 ordered outcomes.")
+    L.append("- Three consecutive doubles sends the player to Jail without "
+             "moving.")
+    L.append("- Square 30 (\"Go To Jail\") sends the player to Jail and is "
+             "never a resting square (probability exactly 0). It is the only "
+             "relocating square left on the board.")
+    L.append("- **Jail: pay to leave immediately. This is a mandatory rule of "
+             "the ruleset, not a modelling assumption.** Rolling for doubles "
+             "to escape is not offered. A player sent to Jail pays the fine "
+             "and leaves on their next turn. In v1 this convention was an "
+             "assumption chosen to match common house rules; here the spec "
+             "and the model agree by construction rather than by coincidence. "
+             "Arriving in Jail still ends the turn and resets the "
+             "consecutive-doubles counter.")
+    L.append("- Square 10 aggregates \"In Jail\" and \"Just Visiting\".")
+    L.append("")
+    L.append("## All 40 squares, by probability (descending)")
+    L.append("")
+    if v1 is not None:
+        L.append("| Rank | Square | Name | Group | Probability | % | "
+                 "v1 % | Delta (pp) |")
+        L.append("| ---: | ---: | --- | --- | ---: | ---: | ---: | ---: |")
+        for rank, r in enumerate(ordered, 1):
+            grp = GROUP_LABELS.get(r["group"], "-")
+            L.append(f"| {rank} | {r['index']} | {r['name']} | {grp} | "
+                     f"{r['probability']:.6f} | {r['probability']*100:.4f}% | "
+                     f"{r['probability_v1']*100:.4f}% | "
+                     f"{r['delta']*100:+.4f} |")
+    else:
+        L.append("| Rank | Square | Name | Group | Probability | % |")
+        L.append("| ---: | ---: | --- | --- | ---: | ---: |")
+        for rank, r in enumerate(ordered, 1):
+            grp = GROUP_LABELS.get(r["group"], "-")
+            L.append(f"| {rank} | {r['index']} | {r['name']} | {grp} | "
+                     f"{r['probability']:.6f} | {r['probability']*100:.4f}% |")
+    L.append("")
+    L.append(f"**Total: {total:.12f}**")
+    L.append("")
+
+    L.append("## Aggregate probability by color group")
+    L.append("")
+    if v1_group_totals is not None:
+        L.append("| Group | Squares | Total | % | Per-square avg % | "
+                 "v1 total % | Delta (pp) |")
+        L.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+        for g in COLOR_GROUPS:
+            m = group_members[g]
+            t = group_totals[g]
+            L.append(f"| {GROUP_LABELS[g]} | {', '.join(map(str, m))} | "
+                     f"{t:.6f} | {t*100:.4f}% | {per_sq[g]*100:.4f}% | "
+                     f"{v1_group_totals[g]*100:.4f}% | "
+                     f"{(t - v1_group_totals[g])*100:+.4f} |")
+    else:
+        L.append("| Group | Squares | Total | % | Per-square avg % |")
+        L.append("| --- | --- | ---: | ---: | ---: |")
+        for g in COLOR_GROUPS:
+            m = group_members[g]
+            t = group_totals[g]
+            L.append(f"| {GROUP_LABELS[g]} | {', '.join(map(str, m))} | "
+                     f"{t:.6f} | {t*100:.4f}% | {per_sq[g]*100:.4f}% |")
+    L.append("")
     prop_total = sum(group_totals.values())
-    lines.append(f"All 28 purchasable properties combined: "
-                 f"{prop_total:.6f} ({prop_total * 100:.4f}%)")
-    lines.append("")
-    lines.append("Orange is the strongest three-square group, and the four "
-                 "railroads together are the single highest-value set of "
-                 "squares on the board.")
-    lines.append("")
-    lines.append("## Validation")
-    lines.append("")
-    lines.append("Where Jail's probability comes from (contributions per die "
-                 "roll, summing to the square-10 total):")
-    lines.append("")
-    lines.append("| Arrival route | Probability | % |")
-    lines.append("| --- | ---: | ---: |")
+    L.append(f"All 28 purchasable properties combined: {prop_total:.6f} "
+             f"({prop_total*100:.4f}%)")
+    L.append("")
+    L.append(f"- Strongest three-square colour group per square: "
+             f"**{GROUP_LABELS[best_mono]}** at {per_sq[best_mono]*100:.4f}% "
+             f"per square.")
+    L.append(f"- Highest-traffic set overall by total: "
+             f"**{GROUP_LABELS[best_set_total]}** at "
+             f"{group_totals[best_set_total]*100:.4f}%.")
+    L.append("")
+
+    L.append("## Traffic spread across purchasable properties")
+    L.append("")
+    L.append("| Metric | v2 | v1 |")
+    L.append("| --- | ---: | ---: |")
+    L.append(f"| Highest-traffic property | {hi['name']} "
+             f"{hi['probability']*100:.4f}% | "
+             + (f"{v1_hi[1]} {v1_hi[0]*100:.4f}%" if v1 else "-") + " |")
+    L.append(f"| Lowest-traffic property | {lo['name']} "
+             f"{lo['probability']*100:.4f}% | "
+             + (f"{v1_lo[1]} {v1_lo[0]*100:.4f}%" if v1 else "-") + " |")
+    L.append(f"| Spread (percentage points) | {spread*100:.4f} | "
+             + (f"{v1_spread*100:.4f}" if v1 else "-") + " |")
+    L.append(f"| Ratio highest:lowest | {ratio:.4f}x | "
+             + (f"{v1_ratio:.4f}x" if v1 else "-") + " |")
+    L.append("")
+
+    L.append("## Shape of the distribution")
+    L.append("")
+    L.append("With card movement removed, the board carries exactly one "
+             "structure, driven entirely by the two Jail mechanics:")
+    L.append("")
+    L.append(f"- **Mass source at square 10.** Jail absorbs "
+             f"{square_p[JAIL]*100:.2f}% of all rolls, roughly twice the "
+             f"2.50% uniform baseline.")
+    L.append(f"- **Echo peak at square {(JAIL+7)%N} (Jail + 7).** Everything "
+             f"leaving Jail re-enters the board one modal 2d6 roll later, so "
+             f"square {(JAIL+7)%N} is the busiest non-Jail square at "
+             f"{square_p[(JAIL+7)%N]*100:.4f}%. The echo decays smoothly "
+             f"across the Orange, Red and Yellow ranks.")
+    L.append(f"- **Shadow trough at square {(GO_TO_JAIL+7)%N} (Go To Jail + "
+             f"7).** Square 30 is never a resting square, so it feeds nobody, "
+             f"and the deficit lands one modal roll later. Square "
+             f"{(GO_TO_JAIL+7)%N} is the quietest square on the board at "
+             f"{square_p[(GO_TO_JAIL+7)%N]*100:.4f}%.")
+    L.append("")
+    L.append("This is why Orange and Red still lead and why Dark Blue is "
+             "still traffic-poor: those positions are now determined purely "
+             "by distance from Jail, not by card destinations. Orange's "
+             "strength was previously attributed to Jail traffic, and that "
+             "attribution is now the *entire* explanation rather than one "
+             "contributor among several.")
+    L.append("")
+    L.append("## Validation")
+    L.append("")
+    L.append("Where Jail's probability comes from (contributions per die "
+             "roll, summing to the square-10 total):")
+    L.append("")
+    L.append("| Arrival route | Probability | % |")
+    L.append("| --- | ---: | ---: |")
     for label, val in jail_src.items():
-        lines.append(f"| {label} | {val:.6f} | {val * 100:.4f}% |")
-    lines.append(f"| **Total** | **{sum(jail_src.values()):.6f}** | "
-                 f"**{sum(jail_src.values()) * 100:.4f}%** |")
-    lines.append("")
-    lines.append("Independent confirmations:")
-    lines.append("")
-    lines.append("- Power iteration and a numpy linear solve of "
-                 "`pi (P - I) = 0` agree to ~5e-16.")
-    lines.append("- A 40,000,000-roll Monte Carlo simulation of the same rules "
-                 "reproduced every square to within 0.005 percentage points "
-                 "(consistent with sampling noise).")
-    lines.append("- Every row of the 120x120 transition matrix sums to 1.")
-    lines.append("- Values match the classic published figures for this model: "
-                 "Illinois Ave 3.19%, Go 3.10%, New York Ave 3.09%, "
-                 "B&O 3.07%, Reading RR 2.96%.")
-    lines.append("")
+        L.append(f"| {label} | {val:.6f} | {val*100:.4f}% |")
+    L.append(f"| **Total** | **{sum(jail_src.values()):.6f}** | "
+             f"**{sum(jail_src.values())*100:.4f}%** |")
+    L.append("")
+    L.append("Independent confirmations:")
+    L.append("")
+    L.append("- Probabilities sum to "
+             f"{total:.12f}.")
+    if max_dev is not None:
+        L.append(f"- Power iteration and a numpy linear solve of "
+                 f"`pi (P - I) = 0` agree to {max_dev:.2e}.")
+    if mc is not None:
+        L.append(f"- A {n_mc:,}-roll Monte Carlo simulation of the same rules "
+                 f"reproduced every square to within {mc_worst*100:.4f} "
+                 f"percentage points (worst: square {mc_worst_sq}), "
+                 f"consistent with sampling noise.")
+    L.append("- Every row of the 120x120 transition matrix sums to 1.")
+    L.append("- No comparison against published Monopoly tables is made or is "
+             "valid, since those assume the standard movement decks.")
+    L.append("")
 
-    md_path = os.path.join(here, "landing_probs.md")
+    md_path = os.path.join(here, "landing_probs_v2.md")
     with open(md_path, "w") as fh:
-        fh.write("\n".join(lines))
+        fh.write("\n".join(L))
 
-    # ---------------- Console output ----------------
-    print("Monopoly steady-state landing probabilities")
-    print("Model: (square, consecutive_doubles) Markov chain, 120 states, "
-          "1 step = 1 die roll.")
-    print("JAIL ASSUMPTION: 'pay to get out immediately' -- a player sent to "
-          "Jail leaves on the")
-    print("next turn; square 10 aggregates In Jail + Just Visiting; "
-          "square 30 is never a resting square.")
+    # ---------------- Console ----------------
+    print("LEVERAGE landing probabilities v2 -- NO MOVEMENT CARDS")
+    print("Card squares 2/7/17/22/33/36 are ordinary terminal resting squares.")
+    print("JAIL: pay to leave immediately is a MANDATORY RULE here, not an "
+          "assumption.")
+    print("Published Monopoly reference tables DO NOT APPLY to this board.")
     print()
     print(f"Power iteration converged in {iters} iterations.")
     if max_dev is not None:
         print(f"numpy linear-solve cross-check: max deviation = {max_dev:.3e}")
-    else:
-        print("numpy not available; power iteration only.")
+    if mc is not None:
+        print(f"Monte Carlo {n_mc:,} rolls in {mc_secs:.1f}s: "
+              f"max deviation {mc_worst*100:.4f} pp (square {mc_worst_sq})")
     print()
 
-    print("Top 10 squares:")
-    print(f"{'#':>3}  {'Sq':>3}  {'Name':<24} {'Prob':>10}  {'%':>8}")
-    for rank, r in enumerate(ordered[:10], 1):
-        print(f"{rank:>3}  {r['index']:>3}  {r['name']:<24} "
-              f"{r['probability']:>10.6f}  {r['probability'] * 100:>7.4f}%")
+    print("All 40 squares (descending):")
+    hdr = f"{'#':>3}  {'Sq':>3}  {'Name':<24} {'v2 %':>8}"
+    if v1 is not None:
+        hdr += f" {'v1 %':>8} {'delta pp':>9}"
+    print(hdr)
+    for rank, r in enumerate(ordered, 1):
+        line = (f"{rank:>3}  {r['index']:>3}  {r['name']:<24} "
+                f"{r['probability']*100:>7.4f}%")
+        if v1 is not None:
+            line += (f" {r['probability_v1']*100:>7.4f}% "
+                     f"{r['delta']*100:>+8.4f}")
+        print(line)
     print()
 
     print("Jail probability, by arrival route:")
     for label, val in jail_src.items():
-        print(f"  {label:<40} {val * 100:>7.4f}%")
-    print(f"  {'TOTAL':<40} {sum(jail_src.values()) * 100:>7.4f}%")
+        print(f"  {label:<40} {val*100:>7.4f}%")
+    print(f"  {'TOTAL':<40} {sum(jail_src.values())*100:>7.4f}%")
     print()
 
     print("Aggregate by color group:")
-    print(f"{'Group':<12} {'Sqs':>4} {'Total':>10} {'%':>9} {'avg %/sq':>9}")
+    hdr = f"{'Group':<12} {'Sqs':>4} {'total %':>9} {'per-sq %':>9}"
+    if v1_group_totals is not None:
+        hdr += f" {'v1 tot %':>9} {'delta pp':>9}"
+    print(hdr)
     for g in COLOR_GROUPS:
-        tot = group_totals[g]
-        k = len(group_members[g])
-        print(f"{GROUP_LABELS[g]:<12} {k:>4} {tot:>10.6f} "
-              f"{tot * 100:>8.4f}% {tot * 100 / k:>8.4f}%")
+        t = group_totals[g]
+        line = (f"{GROUP_LABELS[g]:<12} {len(group_members[g]):>4} "
+                f"{t*100:>8.4f}% {per_sq[g]*100:>8.4f}%")
+        if v1_group_totals is not None:
+            line += (f" {v1_group_totals[g]*100:>8.4f}% "
+                     f"{(t - v1_group_totals[g])*100:>+9.4f}")
+        print(line)
     print()
 
-    # ---------------- Sanity checks ----------------
+    print("Load-bearing design claims:")
+    print(f"  Strongest 3-square colour group per square: "
+          f"{GROUP_LABELS[best_mono]} ({per_sq[best_mono]*100:.4f}%/sq) "
+          f"-- {'UNCHANGED' if best_mono == 'orange' else 'CHANGED, SPEC NEEDS REWRITE'}")
+    print(f"  Highest-traffic set overall by total: "
+          f"{GROUP_LABELS[best_set_total]} "
+          f"({group_totals[best_set_total]*100:.4f}%) "
+          f"-- {'UNCHANGED' if best_set_total == 'railroad' else 'CHANGED, SPEC NEEDS REWRITE'}")
+    print()
+
+    print("Property traffic spread:")
+    print(f"  v2: {hi['name']} {hi['probability']*100:.4f}% .. "
+          f"{lo['name']} {lo['probability']*100:.4f}%  "
+          f"spread {spread*100:.4f} pp, ratio {ratio:.4f}x")
+    if v1 is not None:
+        print(f"  v1: {v1_hi[1]} {v1_hi[0]*100:.4f}% .. "
+              f"{v1_lo[1]} {v1_lo[0]*100:.4f}%  "
+              f"spread {v1_spread*100:.4f} pp, ratio {v1_ratio:.4f}x")
+        verdict = "NARROWS" if spread < v1_spread else "WIDENS"
+        print(f"  Spread {verdict}: "
+              f"{v1_spread*100:.4f} pp -> {spread*100:.4f} pp "
+              f"({(spread/v1_spread - 1)*100:+.1f}%)")
+    print()
+
+    # ---------------- Checks ----------------
     checks = []
-
-    checks.append(("probabilities sum to 1.0",
-                   abs(total - 1.0) < 1e-9,
+    checks.append(("probabilities sum to 1.0", abs(total - 1.0) < 1e-9,
                    f"sum = {total:.12f}"))
-
-    top_sq = ordered[0]["index"]
-    checks.append(("Jail (10) is the single most-landed-on square",
-                   top_sq == JAIL and ordered[0]["probability"] > ordered[1]["probability"],
-                   f"top = square {top_sq} ({ordered[0]['name']}) at "
-                   f"{ordered[0]['probability'] * 100:.4f}%"))
-
-    checks.append(("Jail probability in the expected 5.5-6.5% band "
-                   "(pay-immediately model)",
-                   0.055 <= square_p[JAIL] <= 0.065,
-                   f"{square_p[JAIL] * 100:.4f}%"))
-
-    checks.append(("Jail decomposition reconciles with the chain marginal",
-                   abs(sum(jail_src.values()) - square_p[JAIL]) < 1e-12,
-                   f"decomposed {sum(jail_src.values()) * 100:.4f}% vs "
-                   f"marginal {square_p[JAIL] * 100:.4f}%"))
-
-    props = [r for r in ordered if r["group"] is not None]
-    checks.append(("Illinois Avenue (24) is the most-landed-on property",
-                   props[0]["index"] == 24,
-                   f"top property = square {props[0]['index']} "
-                   f"({props[0]['name']}) at {props[0]['probability'] * 100:.4f}%"))
-
-    checks.append(("Illinois Avenue approx 3.2%",
-                   0.030 <= square_p[24] <= 0.034,
-                   f"{square_p[24] * 100:.4f}%"))
-
-    monopolies = ["brown", "light blue", "pink", "orange",
-                  "red", "yellow", "green", "dark blue"]
-    best_group = max(monopolies, key=lambda g: group_totals[g])
-    checks.append(("Orange is the highest-probability 3-square color group",
-                   best_group == "orange",
-                   f"best = {GROUP_LABELS[best_group]} at "
-                   f"{group_totals[best_group] * 100:.4f}%"))
-
     checks.append(("Go To Jail (30) has zero probability",
-                   square_p[GO_TO_JAIL] < 1e-12,
-                   f"{square_p[GO_TO_JAIL]:.3e}"))
-
-    all_nonneg = all(p >= -1e-15 for p in square_p)
-    checks.append(("all probabilities non-negative", all_nonneg, ""))
-
+                   square_p[GO_TO_JAIL] < 1e-12, f"{square_p[GO_TO_JAIL]:.3e}"))
+    checks.append(("all probabilities non-negative",
+                   all(p >= -1e-15 for p in square_p), ""))
+    checks.append(("Jail decomposition reconciles with chain marginal",
+                   abs(sum(jail_src.values()) - square_p[JAIL]) < 1e-12,
+                   f"{sum(jail_src.values())*100:.4f}% vs "
+                   f"{square_p[JAIL]*100:.4f}%"))
+    checks.append(("Jail is still the single most-landed-on square",
+                   ordered[0]["index"] == JAIL,
+                   f"top = {ordered[0]['name']} "
+                   f"{ordered[0]['probability']*100:.4f}%"))
     if max_dev is not None:
         checks.append(("power iteration matches numpy linear solve",
                        max_dev < 1e-9, f"max dev = {max_dev:.3e}"))
+    if mc is not None:
+        checks.append((f"Monte Carlo ({n_mc:,} rolls) agrees within 0.02 pp",
+                       mc_worst < 2e-4, f"max dev = {mc_worst*100:.4f} pp"))
+    # With card movement gone, the only remaining structure is the wave driven
+    # by the two Jail mechanics: a mass source at square 10, an echo peaking
+    # one modal roll (7) later at square 17, and a shadow troughing 7 past the
+    # empty Go To Jail square at 37.
+    echo_peak = (JAIL + 7) % N
+    shadow_trough = (GO_TO_JAIL + 7) % N
+    non_jail = [(square_p[i], i) for i in range(N) if i not in (JAIL, GO_TO_JAIL)]
+    resting = [(square_p[i], i) for i in range(N) if i != GO_TO_JAIL]
+    checks.append((f"highest non-Jail square is the echo peak at Jail+7 "
+                   f"(square {echo_peak})",
+                   max(non_jail)[1] == echo_peak,
+                   f"max at square {max(non_jail)[1]} "
+                   f"({max(non_jail)[0]*100:.4f}%)"))
+    checks.append((f"lowest resting square is the shadow trough at "
+                   f"GoToJail+7 (square {shadow_trough})",
+                   min(resting)[1] == shadow_trough,
+                   f"min at square {min(resting)[1]} "
+                   f"({min(resting)[0]*100:.4f}%)"))
+
+    # The card-movement depression is gone. Note we deliberately do NOT assert
+    # that the card squares are unremarkable: square 17 sits exactly on the
+    # Jail+7 echo crest and squares 7 and 36 sit in the Go-To-Jail shadow, so
+    # their levels are set by board geometry, not by card behaviour. What must
+    # be true is that none of them is still depressed below the board's own
+    # shadow trough, and that every one of them rose relative to v1.
+    trough = min(square_p[i] for i in range(N) if i != GO_TO_JAIL)
+    checks.append(("no card square is depressed below the board's shadow "
+                   "trough (card-movement drain removed)",
+                   all(square_p[c] >= trough - 1e-15 for c in CARD_SQUARES),
+                   f"trough {trough*100:.4f}%; cards "
+                   + ", ".join(f"{c}:{square_p[c]*100:.3f}%"
+                               for c in CARD_SQUARES)))
+    if v1 is not None:
+        checks.append(("all six card squares gained traffic vs v1",
+                       all(square_p[c] > v1[c] for c in CARD_SQUARES),
+                       ", ".join(f"{c}:{(square_p[c]-v1[c])*100:+.3f}pp"
+                                 for c in CARD_SQUARES)))
+
+    if v1 is not None:
+        checks.append(("property traffic spread narrowed vs v1",
+                       spread < v1_spread,
+                       f"{v1_spread*100:.4f} pp -> {spread*100:.4f} pp"))
 
     print("Sanity checks:")
     ok = True
     for label, passed, detail in checks:
         ok = ok and passed
-        mark = "PASS" if passed else "FAIL"
-        suffix = f"  ({detail})" if detail else ""
-        print(f"  [{mark}] {label}{suffix}")
+        print(f"  [{'PASS' if passed else 'FAIL'}] {label}"
+              + (f"  ({detail})" if detail else ""))
     print()
     print("ALL CHECKS PASSED" if ok else "SOME CHECKS FAILED")
     print()
     print(f"Wrote {json_path}")
     print(f"Wrote {md_path}")
-
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

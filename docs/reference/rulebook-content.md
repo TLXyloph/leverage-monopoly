@@ -868,34 +868,46 @@ You lost a railroad worth 2.96% of every roll for the remaining ten rounds, in o
 
 ### Example 5 — When you cannot pay
 
-Round 17. You land on an opponent's hoteled Boardwalk. **Rent: $2,000.** You have $180 in clean cash.
+Round 17. You land on an opponent's hoteled Boardwalk. **Rent: $2,000.**
 
-The app works down the list:
+You hold seven undeveloped deeds — the pink group (St. Charles $140, States $140, Virginia $160), Short Line $200, Electric Company $150, Baltic $60, Mediterranean $60 — for **$910 of face value**. No buildings. Your borrowing base is 50% of $910 = **$455**, of which you have already drawn $335. You have **$180** in clean cash.
+
+The app works down the list. It draws your remaining credit, then force-liquidates your deeds in descending face-value order at the **70% floor**, offering each to the other three players first:
 
 ```
-Clean cash                                              $180
-Draw remaining credit  (base $930, drawn $810)         +$120   ->  $300
-Mortgage everything mortgageable  (50% of $910 face)   +$455   ->  $755
+Clean cash                                                   $180
+Draw remaining credit  ($455 base - $335 drawn)             +$120  ->   $300
 
-STILL OWED                                                        $1,245
+Short Line          $200 face  x 70%                        +$140
+Virginia Ave        $160 face  x 70%                        +$112
+Electric Company    $150 face  x 70%                        +$105
+St. Charles Place   $140 face  x 70%                         +$98
+States Ave          $140 face  x 70%                         +$98
+Baltic Ave           $60 face  x 70%                         +$42
+Mediterranean Ave    $60 face  x 70%                         +$42
+                                                     total  +$637  ->   $937
+
+STILL OWED                                                            $1,063
 ```
 
-That $1,245 becomes **Distressed Debt**. Here is what it does over the seven Settlements from round 18 to round 24, at 15% a round:
+That $1,063 becomes **Distressed Debt**. Here is what it does over the seven Settlements from round 18 to round 24, at 15% a round:
 
 | End of round | Distressed debt |
 |---|---|
-| 18 | $1,432 |
-| 19 | $1,647 |
-| 20 | $1,894 |
-| 21 | $2,178 |
-| 22 | $2,505 |
-| 23 | $2,881 |
-| **24** | **$3,312** |
+| 18 | $1,222 |
+| 19 | $1,406 |
+| 20 | $1,617 |
+| 21 | $1,859 |
+| 22 | $2,138 |
+| 23 | $2,459 |
+| **24** | **$2,828** |
 
-A $1,245 shortfall in round 17 subtracts **$3,312** from your final net worth. Compounding at 15% is not a slap on the wrist; it is roughly the value of a full colour group.
+A $1,063 shortfall in round 17 subtracts **$2,828** from your final net worth. Compounding at 15% is not a slap on the wrist; it is roughly the value of a full colour group.
+
+One loose end you should raise with the facilitator rather than discover in round 24: you now have $455 drawn against a borrowing base of zero, and nothing left to liquidate. The rules do not say what the app does with that. Ask before it matters.
 
 **What does not happen:** you are not eliminated. You do not sit out. You take every phase normally, you collect rent, you trade, you originate contracts, you can still win — the math is just savage. Every clean dollar you can find between now and round 24 is worth 15% a round more than it looks, because it is the highest-interest liability on the board by a wide margin.
 
-**What you should actually do.** Everything on this list beats carrying the debt: sell rent futures on your remaining unmortgaged deeds; sell a deed to another player at a negotiated price rather than at the 70% liquidation floor; borrow from a player at any rate under 15% per round, which is every rate any sane lender would offer; sell a loan note or a tranche you hold. Distressed debt at 15% is the most expensive money in the game. It exists so that going broke is a wound rather than an exit, and it is priced accordingly.
+**What you should have done in the Open phase before this.** Everything on this list beats both the 70% floor and the 15% coupon: sell rent futures on your deeds while you still own them; sell a deed to another player at a negotiated price rather than letting the app dispose of it at 70% of face; borrow from a player at any rate under 15% per round, which is every rate a sane lender would offer; sell a loan note or a tranche you hold. Distressed debt at 15% is the most expensive money in the game, and forced liquidation at 70% is the worst price on the board. Both of them are what happens when you run out of Open phase, not what happens when you run out of options.
 
 **And the thing nobody thinks of until round 22:** if you are the opponent who owns that hoteled Boardwalk, a player who cannot pay you is a player whose loan note now marks at 40% of principal in your own net worth. Bankrupting the table is not obviously good for you.
