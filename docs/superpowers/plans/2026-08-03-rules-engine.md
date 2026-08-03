@@ -398,8 +398,14 @@ export const ECONOMY = {
   /** Accrues on any shortfall a player cannot meet after credit and liquidation. */
   DISTRESSED_DEBT_RATE: 0.15,
 
-  /** Floor price in a forced liquidation, as a fraction of deed face value. */
-  LIQUIDATION_FLOOR: 0.7,
+  /**
+   * Floor price in a forced liquidation, as a fraction of deed face value.
+   * MUST be strictly greater than DEED_ADVANCE_RATE or liquidation diverges:
+   * a sale raises floor x face but removes advance x face from the borrowing
+   * base, so a floor below the advance rate widens the shortfall on every sale.
+   * Asserted at startup. See spec section 5.
+   */
+  LIQUIDATION_FLOOR: 0.8,
 
   /** Standard Monopoly mortgage economics. */
   MORTGAGE_RATE: 0.5,

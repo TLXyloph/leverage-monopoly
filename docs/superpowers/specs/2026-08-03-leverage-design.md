@@ -267,11 +267,33 @@ If drawn balance exceeds borrowing base at Settlement — because the player mor
 sold, or lost a deed — the position is flagged. The player has until the end of the
 next Open phase to cure it by repaying or by raising the base.
 
-If uncured, the app force-liquidates. Deeds are offered to the other three players in
-descending face-value order. Each is sold to the highest bid at or above **70% of face
-value**; if no player bids, the bank takes it at exactly 70%. The deed becomes
-unowned-by-bank and is not re-drafted. Proceeds pay down the drawn balance until the
-position is cured.
+If uncured, the app force-liquidates at the start of the next Open phase (see 19.8).
+Deeds are offered to the other three players in descending face-value order. Each is
+sold to the highest bid at or above **80% of face value**; if no player bids, the bank
+takes it at exactly 80%. The deed becomes bank-owned and is not re-drafted.
+
+**Developed deeds are stripped first.** Buildings across the colour group are sold back
+to the bank at 50% of cost following the even-build rule, and those proceeds go against
+the debt before the deed itself is auctioned. Buildings contribute 50% of cost to the
+borrowing base and return 50% of cost in cash, so stripping is exactly shortfall-neutral.
+
+**Liquidation stops when the position is cured, or when the player has no unmortgaged
+deeds left.** Any residual shortfall becomes distressed debt.
+
+### The floor must exceed the advance rate
+
+`LIQUIDATION_FLOOR` (0.80) is required to be strictly greater than `DEED_ADVANCE_RATE`
+(0.75), and the engine asserts this at startup.
+
+The reason is that liquidation would otherwise diverge. Selling a deed raises
+`floor × face` in cash but removes `advance × face` from the borrowing base. If the
+floor is below the advance rate, every forced sale *widens* the shortfall — at a 70%
+floor against a 75% advance rate, each sale makes the position 5% of face worse, and
+the loop terminates only by consuming the player's entire portfolio.
+
+At 80% against 75%, each sale narrows the shortfall by 5% of face and liquidation
+converges. This invariant was violated in an earlier draft of this spec and is recorded
+here so the two constants are never tuned independently again.
 
 ### Distressed debt
 
@@ -884,7 +906,45 @@ cannot meet — an unpayable rent bill, an audit fine, a tax — becomes distres
 immediately, with no liquidation and no auction. This is what keeps a broke player
 playing rather than stalling the table.
 
-### 19.9 Heat timing
+### 19.9 Ventures on mortgaged deeds
+
+A mortgaged deed charges no rent, so Escort Service and Chop Shop bonuses computed on
+it are **zero**. Section 19.5's "regardless of who receives it" governs the *recipient*
+of rent, not whether rent was charged at all.
+
+### 19.10 A second peer loan default does not halve again
+
+The borrowing base penalty for defaulting on a peer loan is a single permanent halving.
+Subsequent defaults carry the collateral loss and the write-off but do not compound the
+penalty. Two halvings against a 75% advance rate would take a player to 18.75%, which is
+a functionally different and much crueller game than a single floor at 37.5%.
+
+### 19.11 Jail does not reduce the rent-payer count
+
+The ×3 multiplier in 19.2 assumes three opponents can owe rent each round. This holds:
+under the mandatory pay-to-leave convention a jailed player still rolls and moves on
+their next turn, so no player is ever absent from a round. A player sent to Jail
+mid-turn takes no further roll that round, which the Markov model already accounts for.
+
+### 19.12 Forced liquidation extinguishes encumbrances
+
+A forced liquidation **cancels any rent future and any deed option on the liquidated
+deed**. The futures holder receives the standard make-whole payment; the option holder
+receives a refund of their premium. Both amounts are added to the liquidated player's
+shortfall.
+
+Deed options otherwise lock the underlying deed against sale, trade and mortgage, and
+rent futures otherwise follow the deed to a new owner. Neither survives liquidation, and
+the deed reaches auction unencumbered.
+
+This closes two exploits that the encumbrance rules would otherwise open. If locks
+blocked liquidation, a distressed player could write a $1 option on every deed and
+become judgment-proof. If encumbrances instead followed the deed into the auction, a
+player could write a $1-strike option to a confederate, be liquidated, collect the
+bank's 80% floor, and have the confederate exercise for a dollar. Extinguishing on
+liquidation removes the value of both manoeuvres.
+
+### 19.13 Heat timing
 
 The laundering haircut is computed from the player's Heat **before** that transaction's
 +1 is applied. At Heat 3 the haircut is 25%, not 30%.
