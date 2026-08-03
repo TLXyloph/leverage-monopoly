@@ -775,7 +775,7 @@ histories:
 players, against the real server:
 
 1. Full seven-round draft: 28 deeds allocated, 7 per player, budgets correct, cascades resolved
-2. Margin call leading to forced liquidation at the 70% floor
+2. Margin call leading to forced liquidation at the 80% floor
 3. Rent future originated, resold, matured, paid out; encumbrance survives a deed trade
 4. CDO built, rated, waterfall paid, underlying defaults, CDS triggers
 5. Venture launched, dirty cash accrued, laundered, audit fires, cash seized
@@ -883,7 +883,7 @@ residual tranche is genuinely the riskiest.
 ### 19.4 Collateral on a pooled loan note
 
 When a peer loan held inside a pool defaults, its collateral deeds are sold to the bank
-at the standard liquidation floor of 70% of face value, and the proceeds enter the
+at the standard liquidation floor of 80% of face value, and the proceeds enter the
 pool's collected cash for that round's waterfall.
 
 Deeds cannot be distributed through a waterfall, only cash — this converts them.

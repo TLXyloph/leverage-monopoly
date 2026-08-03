@@ -4842,3 +4842,1823 @@ An ESLint no-restricted-syntax rule now rejects Math.floor(a * b) outside
 core/money.ts, and four competing percentage helpers written independently
 by Tasks 9, 12 and 16 collapse into Task 2's basis-point implementation."
 ```
+
+---
+
+**Revision to the file plan above.** Writing the generators out found three files the
+header's list did not anticipate. The final split is:
+
+| File | Lines | Role |
+|---|---|---|
+| `tests/property/arbitraries.ts` | ~215 | Generators only. No engine imports except types and `DECKS`. |
+| `tests/property/dispatch.ts` | ~205 | Resolves one `ScriptedAction` against live state into one decider call. |
+| `tests/property/driver.ts` | ~150 | The `Run` harness, the draft loop, the round loop, `runScript`. |
+| `tests/property/ledger.ts` | ~95 | `conservedTotal`, `expectedDelta`, `BANK_CROSSING_EVENTS`. |
+| `tests/property/setup.ts` | ~20 | `fc.configureGlobal` — run budget and seed reporting. |
+| `tests/property/money.test.ts` | ~80 | Step 7. |
+| `tests/property/coverage.test.ts` | ~110 | Proves the generator reaches the interesting states. |
+| `tests/property/conservation.test.ts` | ~95 | Property 1. |
+| `tests/property/replay.test.ts` | ~85 | Property 2. |
+| `tests/property/waterfall.test.ts` | ~90 | Property 3. |
+| `tests/property/invariants.test.ts` | ~185 | Properties 4-7. |
+| `tests/property/deeds.test.ts` | ~120 | Property 8 plus physical-component supply. |
+
+`dispatch.ts` is split out of `driver.ts` because the eighteen-arm switch alone is 160
+lines and the two have different reasons to change: `dispatch.ts` changes when a context
+adds a command, `driver.ts` changes when the phase machine changes. `deeds.test.ts` is
+split out of `invariants.test.ts` for the same reason — deed and building integrity is
+the one property that never reads a cash balance.
+
+- [ ] **Step 9: Write the scripted-action vocabulary in `arbitraries.ts`**
+
+`packages/engine/tests/property/arbitraries.ts`. The union is the whole design: every
+arm carries *slots and percentages*, never identities and dollars, so that no arm can be
+generated in a form the engine will reject for a boring reason.
+
+```ts
+import fc from 'fast-check'
+import { PLAYER_IDS } from '../../src/core/types.js'
+import type { DiceRoll, Era, PlayerId } from '../../src/core/types.js'
+import type { ActiveVenture, GameConfig } from '../../src/core/state.js'
+import { DECKS } from '../../src/contexts/decks/index.js'
+
+/** An index the driver resolves modulo the length of the real collection. */
+export type Slot = number
+/** An integer percentage, 0-120, that the driver resolves against a live balance. */
+export type Percent = number
+
+/**
+ * Eighteen arms, not the fifteen the Produces block above estimated. The three extra
+ * are the resale arms — `sell-future`, `sell-tranche`, `sell-peer-loan`. They are worth
+ * their weight because a secondary sale is the only way an instrument's holder comes to
+ * differ from its originator, and several invariants only bite once those two differ.
+ */
+export type ScriptedAction =
+  | { readonly kind: 'draw-credit'; readonly actor: Slot; readonly percent: Percent }
+  | { readonly kind: 'repay-credit'; readonly actor: Slot; readonly percent: Percent }
+  | { readonly kind: 'repay-distressed'; readonly actor: Slot; readonly percent: Percent }
+  | { readonly kind: 'originate-peer-loan'; readonly actor: Slot; readonly counterparty: Slot
+      readonly percent: Percent; readonly ratePerRound: number
+      readonly termRounds: number; readonly collateral: Slot }
+  | { readonly kind: 'repay-peer-loan'; readonly actor: Slot; readonly contract: Slot
+      readonly percent: Percent }
+  | { readonly kind: 'sell-peer-loan'; readonly actor: Slot; readonly contract: Slot
+      readonly counterparty: Slot; readonly percent: Percent }
+  | { readonly kind: 'originate-future'; readonly actor: Slot; readonly deed: Slot
+      readonly counterparty: Slot; readonly window: number; readonly percent: Percent }
+  | { readonly kind: 'sell-future'; readonly actor: Slot; readonly contract: Slot
+      readonly counterparty: Slot; readonly percent: Percent }
+  | { readonly kind: 'write-option'; readonly actor: Slot; readonly deed: Slot
+      readonly counterparty: Slot; readonly strikePercent: Percent
+      readonly premiumPercent: Percent; readonly window: number }
+  | { readonly kind: 'sell-option'; readonly actor: Slot; readonly contract: Slot
+      readonly counterparty: Slot; readonly percent: Percent }
+  | { readonly kind: 'exercise-option'; readonly actor: Slot; readonly contract: Slot }
+  | { readonly kind: 'create-pool'; readonly actor: Slot
+      readonly seniorPercent: Percent; readonly mezzaninePercent: Percent }
+  | { readonly kind: 'sell-tranche'; readonly actor: Slot; readonly pool: Slot
+      readonly tranche: 0 | 1 | 2; readonly counterparty: Slot; readonly percent: Percent }
+  | { readonly kind: 'write-swap'; readonly actor: Slot; readonly counterparty: Slot
+      readonly reference: Slot; readonly notionalPercent: Percent
+      readonly premiumPercent: Percent }
+  | { readonly kind: 'launch-venture'; readonly actor: Slot
+      readonly venture: ActiveVenture['kind']; readonly fundedFrom: 'clean' | 'dirty' }
+  | { readonly kind: 'speakeasy'; readonly actor: Slot; readonly dice: DiceRoll
+      readonly fundedFrom: 'clean' | 'dirty' }
+  | { readonly kind: 'launder'; readonly actor: Slot; readonly percent: Percent }
+  | { readonly kind: 'bribe'; readonly actor: Slot; readonly effect: 0 | 1 | 2
+      readonly target: Slot }
+  | { readonly kind: 'insider-trade'; readonly actor: Slot
+      readonly fundedFrom: 'clean' | 'dirty' }
+
+export interface ScriptedDraftRound {
+  /** One offset per player, in turn order. The driver takes three distinct deeds from it. */
+  readonly offsets: readonly Slot[]
+  /** Bid as a percentage of the top pick's face value. Below 100 is a deliberate reject. */
+  readonly bidPercents: readonly Percent[]
+}
+
+export interface ScriptedRound {
+  readonly actions: readonly ScriptedAction[]
+  /** One roll per player, in turn order. */
+  readonly rolls: readonly DiceRoll[]
+  readonly auditDice: Readonly<Partial<Record<PlayerId, DiceRoll>>>
+  /** Draw an era card during Movement. Deliberately not gated on landing square. */
+  readonly drawCard: boolean
+}
+
+export interface GameScript {
+  readonly config: GameConfig
+  readonly shuffles: Readonly<Record<Era, readonly number[]>>
+  readonly draft: readonly ScriptedDraftRound[]
+  readonly rounds: readonly ScriptedRound[]
+}
+```
+
+`GameScript` gains a `draft` field the Produces block omitted, and `ScriptedRound` gains
+`drawCard`. Both are load-bearing: without generated draft submissions every history
+starts from the same portfolio, and without card draws Task 18's interpreter — the single
+largest body of state-mutating code in the engine — is never touched by any invariant.
+
+- [ ] **Step 10: Write the generators themselves**
+
+Append to `arbitraries.ts`:
+
+```ts
+const slot = fc.integer({ min: 0, max: 63 })
+const percent = fc.integer({ min: 0, max: 120 })
+const die = fc.integer({ min: 1, max: 6 })
+
+export const arbDice: fc.Arbitrary<DiceRoll> = fc.tuple(die, die)
+
+/**
+ * A quarter of rolls are doubles against a true rate of one in six. Doubles drive the
+ * extra-roll path and the triple-doubles jail rule, both of which a uniform generator
+ * reaches roughly once per 216 turns — too rare to be load-bearing at 200 runs.
+ */
+export const arbDiceBiased: fc.Arbitrary<DiceRoll> = fc.oneof(
+  { arbitrary: arbDice, weight: 3 },
+  { arbitrary: die.map((d): DiceRoll => [d, d]), weight: 1 },
+)
+
+export const arbConfig: fc.Arbitrary<GameConfig> = fc.record({
+  turnOrder: fc.shuffledSubarray([...PLAYER_IDS], { minLength: 4, maxLength: 4 }),
+  unlockMode: fc.constantFrom('progressive' as const, 'all' as const),
+  winCondition: fc.oneof(
+    fc.constant({ kind: 'fixed-rounds' as const }),
+    fc.integer({ min: 3_000, max: 12_000 })
+      .map((target) => ({ kind: 'net-worth-target' as const, target })),
+  ),
+})
+
+function arbPermutation(era: Era): fc.Arbitrary<readonly number[]> {
+  const size = DECKS[era].length
+  const indices = Array.from({ length: size }, (_unused, i) => i)
+  return fc.shuffledSubarray(indices, { minLength: size, maxLength: size })
+}
+
+const arbShuffles = fc.record({
+  1: arbPermutation(1), 2: arbPermutation(2),
+  3: arbPermutation(3), 4: arbPermutation(4),
+})
+
+const funded = fc.constantFrom('clean' as const, 'dirty' as const)
+
+export const arbAction: fc.Arbitrary<ScriptedAction> = fc.oneof(
+  fc.record({ kind: fc.constant('draw-credit' as const), actor: slot, percent }),
+  fc.record({ kind: fc.constant('repay-credit' as const), actor: slot, percent }),
+  fc.record({ kind: fc.constant('repay-distressed' as const), actor: slot, percent }),
+  fc.record({
+    kind: fc.constant('originate-peer-loan' as const), actor: slot, counterparty: slot,
+    percent, ratePerRound: fc.integer({ min: 1, max: 20 }).map((n) => n / 100),
+    termRounds: fc.integer({ min: 1, max: 8 }), collateral: slot,
+  }),
+  fc.record({ kind: fc.constant('repay-peer-loan' as const), actor: slot, contract: slot, percent }),
+  fc.record({
+    kind: fc.constant('sell-peer-loan' as const), actor: slot, contract: slot,
+    counterparty: slot, percent,
+  }),
+  fc.record({
+    kind: fc.constant('originate-future' as const), actor: slot, deed: slot,
+    counterparty: slot, window: fc.integer({ min: 1, max: 8 }), percent,
+  }),
+  fc.record({
+    kind: fc.constant('sell-future' as const), actor: slot, contract: slot,
+    counterparty: slot, percent,
+  }),
+  fc.record({
+    kind: fc.constant('write-option' as const), actor: slot, deed: slot, counterparty: slot,
+    strikePercent: percent, premiumPercent: fc.integer({ min: 0, max: 30 }),
+    window: fc.integer({ min: 1, max: 6 }),
+  }),
+  fc.record({
+    kind: fc.constant('sell-option' as const), actor: slot, contract: slot,
+    counterparty: slot, percent,
+  }),
+  fc.record({ kind: fc.constant('exercise-option' as const), actor: slot, contract: slot }),
+  fc.record({
+    kind: fc.constant('create-pool' as const), actor: slot,
+    seniorPercent: fc.integer({ min: 10, max: 60 }),
+    mezzaninePercent: fc.integer({ min: 10, max: 40 }),
+  }),
+  fc.record({
+    kind: fc.constant('sell-tranche' as const), actor: slot, pool: slot,
+    tranche: fc.constantFrom(0 as const, 1 as const, 2 as const),
+    counterparty: slot, percent,
+  }),
+  fc.record({
+    kind: fc.constant('write-swap' as const), actor: slot, counterparty: slot,
+    reference: slot, notionalPercent: percent,
+    premiumPercent: fc.integer({ min: 1, max: 20 }),
+  }),
+  fc.record({
+    kind: fc.constant('launch-venture' as const), actor: slot,
+    venture: fc.constantFrom('escort' as const, 'numbers' as const, 'chop-shop' as const),
+    fundedFrom: funded,
+  }),
+  fc.record({
+    kind: fc.constant('speakeasy' as const), actor: slot, dice: arbDice, fundedFrom: funded,
+  }),
+  fc.record({ kind: fc.constant('launder' as const), actor: slot, percent }),
+  fc.record({
+    kind: fc.constant('bribe' as const), actor: slot,
+    effect: fc.constantFrom(0 as const, 1 as const, 2 as const), target: slot,
+  }),
+  fc.record({ kind: fc.constant('insider-trade' as const), actor: slot, fundedFrom: funded }),
+)
+
+export const arbDraftRound: fc.Arbitrary<ScriptedDraftRound> = fc.record({
+  offsets: fc.array(slot, { minLength: 4, maxLength: 4 }),
+  bidPercents: fc.array(fc.integer({ min: 90, max: 180 }), { minLength: 4, maxLength: 4 }),
+})
+
+export const arbRound: fc.Arbitrary<ScriptedRound> = fc.record({
+  actions: fc.array(arbAction, { minLength: 0, maxLength: 8 }),
+  rolls: fc.array(arbDiceBiased, { minLength: 4, maxLength: 4 }),
+  auditDice: fc.record({ P1: arbDice, P2: arbDice, P3: arbDice, P4: arbDice }),
+  drawCard: fc.boolean(),
+})
+
+/** `maxRounds` is capped at ECONOMY.TOTAL_ROUNDS by the driver, not here. */
+export function arbGameScript(maxRounds: number): fc.Arbitrary<GameScript> {
+  return fc.record({
+    config: arbConfig,
+    shuffles: arbShuffles,
+    draft: fc.array(arbDraftRound, { minLength: 7, maxLength: 7 }),
+    rounds: fc.array(arbRound, { minLength: 1, maxLength: maxRounds }),
+  })
+}
+```
+
+Note `bidPercents` starts at 90, below the 100% face floor. That tail exists so
+`BID_BELOW_FACE` is exercised, and the driver discards the rejection — a player simply
+misses that draft round, which is a legal outcome and produces uneven portfolios.
+
+- [ ] **Step 11: Write the slot resolvers in `dispatch.ts`**
+
+`packages/engine/tests/property/dispatch.ts`. Everything here is total: no resolver can
+throw, and any resolver that cannot find a target returns `null`, which the caller turns
+into a skipped action rather than a crashed run.
+
+```ts
+import { floorPercent } from '../../src/core/money.js'
+import type { GameState, PoolAssetRef, SwapReference } from '../../src/core/state.js'
+import type { BriberyEffect } from '../../src/core/events.js'
+import type { ContractId, DeedId, Money, PlayerId } from '../../src/core/types.js'
+import type { Percent, Slot } from './arbitraries.js'
+
+export function at<T>(items: readonly T[], index: Slot): T | null {
+  if (items.length === 0) return null
+  return items[Math.abs(index) % items.length] ?? null
+}
+
+export function actorAt(state: GameState, index: Slot): PlayerId {
+  return at(state.config.turnOrder, index) ?? 'P1'
+}
+
+/** A player who is not `self`, so SELF_DEALING is never generated by accident. */
+export function otherThan(state: GameState, self: PlayerId, index: Slot): PlayerId | null {
+  const others = state.config.turnOrder.filter((p) => p !== self)
+  return at(others, index)
+}
+
+export function amount(balance: Money, pct: Percent): Money {
+  return floorPercent(Math.max(0, balance), pct / 100)
+}
+
+export function deedsOf(state: GameState, player: PlayerId): readonly DeedId[] {
+  return Object.values(state.deeds)
+    .filter((d) => d.owner === player && !d.mortgaged)
+    .map((d) => d.id)
+}
+
+export function loansOf(state: GameState, player: PlayerId, side: 'lender' | 'borrower'):
+readonly ContractId[] {
+  return state.loans
+    .filter((l) => l.status === 'active' && l[side] === player)
+    .map((l) => l.id)
+}
+
+export function futuresOf(state: GameState, player: PlayerId): readonly ContractId[] {
+  return state.futures.filter((f) => f.holder === player).map((f) => f.id)
+}
+
+export function optionsOf(state: GameState, player: PlayerId): readonly ContractId[] {
+  return state.options.filter((o) => o.holder === player).map((o) => o.id)
+}
+
+/**
+ * Assets the player can legitimately pool: loans they lent, futures and options they
+ * hold. `create-pool` needs three, which is why the arm carries no asset slots — picking
+ * three at random from a list of three or four is pure rejection, so the driver takes the
+ * first three instead and lets the count guard do the rejecting.
+ */
+export function poolableAssets(state: GameState, player: PlayerId): readonly PoolAssetRef[] {
+  return [
+    ...loansOf(state, player, 'lender').map((id): PoolAssetRef => ({ kind: 'peer-loan', id })),
+    ...futuresOf(state, player).map((id): PoolAssetRef => ({ kind: 'rent-future', id })),
+    ...optionsOf(state, player).map((id): PoolAssetRef => ({ kind: 'deed-option', id })),
+  ]
+}
+
+/** Every obligation a swap can reference: active peer loans and live tranches. */
+export function swapReferences(state: GameState): readonly SwapReference[] {
+  return [
+    ...state.loans
+      .filter((l) => l.status === 'active')
+      .map((l): SwapReference => ({ kind: 'peer-loan', id: l.id })),
+    ...state.pools
+      .filter((p) => !p.terminated)
+      .flatMap((p) => p.tranches.map((t): SwapReference =>
+        ({ kind: 'tranche', poolId: p.id, tranche: t.kind }))),
+  ]
+}
+
+const BRIBERY_EFFECTS = [0, 1, 2] as const
+
+export function briberyEffect(
+  state: GameState, self: PlayerId, which: 0 | 1 | 2, target: Slot,
+): BriberyEffect | null {
+  void BRIBERY_EFFECTS
+  if (which === 1) return { kind: 'cancel-card' }
+  if (which === 2) return { kind: 'delay-margin-call' }
+  const victim = otherThan(state, self, target)
+  return victim === null ? null : { kind: 'force-reroll', target: victim }
+}
+
+/** Contract ids are derived, never generated — the engine holds no Math.random. */
+export function scriptedId(prefix: string, state: GameState, actor: PlayerId, n: number): ContractId {
+  return `${prefix}-${actor}-r${state.round}-${n}`
+}
+```
+
+- [ ] **Step 12: Write the action dispatch switch**
+
+Append to `dispatch.ts`. One arm, one decider call. `null` means "this action had no
+legal target in this state", which the driver counts but does not treat as a failure:
+
+```ts
+import { decideCredit, NO_ENCUMBRANCES } from '../../src/contexts/credit/index.js'
+import { decideMarkets } from '../../src/contexts/markets/index.js'
+import { decideSecuritization } from '../../src/contexts/securitization/index.js'
+import { decideUnderworld } from '../../src/contexts/underworld/index.js'
+import { expectedPoolCashflow } from '../../src/contexts/securitization/index.js'
+import type { GameEvent } from '../../src/core/events.js'
+import type { Rejection } from '../../src/core/errors.js'
+import { ECONOMY } from '../../src/config/economy.js'
+import type { ScriptedAction } from './arbitraries.js'
+
+export type Outcome = readonly GameEvent[] | Rejection | null
+
+export function dispatch(state: GameState, action: ScriptedAction, seq: number): Outcome {
+  const self = actorAt(state, action.actor)
+  const me = state.players[self]
+
+  switch (action.kind) {
+    case 'draw-credit':
+      return decideCredit(state,
+        { type: 'DrawCredit', player: self, amount: amount(2_000, action.percent) })
+
+    case 'repay-credit':
+      return decideCredit(state,
+        { type: 'RepayCredit', player: self, amount: amount(me.drawnCredit, action.percent) })
+
+    case 'repay-distressed':
+      return decideCredit(state, {
+        type: 'RepayDistressedDebt', player: self,
+        amount: amount(me.distressedDebt, action.percent),
+      })
+
+    case 'originate-peer-loan': {
+      const borrower = otherThan(state, self, action.counterparty)
+      const pledge = at(deedsOf(state, borrower ?? self), action.collateral)
+      if (borrower === null || pledge === null) return null
+      return decideCredit(state, {
+        type: 'OriginatePeerLoan', lender: self, borrower,
+        principal: amount(me.cleanCash, action.percent),
+        ratePerRound: action.ratePerRound,
+        termRounds: action.termRounds,
+        collateral: [pledge],
+      }, NO_ENCUMBRANCES)
+    }
+
+    case 'repay-peer-loan': {
+      const id = at(loansOf(state, self, 'borrower'), action.contract)
+      const loan = state.loans.find((l) => l.id === id)
+      if (id === null || loan === undefined) return null
+      return decideCredit(state,
+        { type: 'RepayPeerLoan', player: self, id, amount: amount(loan.outstanding, action.percent) },
+        NO_ENCUMBRANCES)
+    }
+
+    case 'sell-peer-loan': {
+      const id = at(loansOf(state, self, 'lender'), action.contract)
+      const to = otherThan(state, self, action.counterparty)
+      const loan = state.loans.find((l) => l.id === id)
+      if (id === null || to === null || loan === undefined) return null
+      return decideCredit(state,
+        { type: 'SellPeerLoanNote', player: self, id, to, price: amount(loan.outstanding, action.percent) },
+        NO_ENCUMBRANCES)
+    }
+
+    case 'originate-future': {
+      const deed = at(deedsOf(state, self), action.deed)
+      const holder = otherThan(state, self, action.counterparty)
+      if (deed === null || holder === null) return null
+      const window = Math.min(action.window, ECONOMY.MAX_FUTURE_WINDOW)
+      return decideMarkets(state, {
+        type: 'OriginateRentFuture', player: self, deed, holder,
+        startRound: state.round, endRound: state.round + window,
+        price: amount(state.deeds[deed]?.faceValue ?? 0, action.percent),
+      })
+    }
+
+    case 'sell-future': {
+      const contract = at(futuresOf(state, self), action.contract)
+      const to = otherThan(state, self, action.counterparty)
+      if (contract === null || to === null) return null
+      return decideMarkets(state, {
+        type: 'SellRentFuture', player: self, contract, to,
+        price: amount(me.cleanCash, action.percent),
+      })
+    }
+
+    case 'write-option': {
+      const deed = at(deedsOf(state, self), action.deed)
+      const holder = otherThan(state, self, action.counterparty)
+      if (deed === null || holder === null) return null
+      const face = state.deeds[deed]?.faceValue ?? 0
+      return decideMarkets(state, {
+        type: 'WriteDeedOption', player: self, deed, holder,
+        premium: amount(face, action.premiumPercent),
+        strike: amount(face, action.strikePercent),
+        expiry: state.round + action.window,
+      })
+    }
+
+    case 'sell-option': {
+      const contract = at(optionsOf(state, self), action.contract)
+      const to = otherThan(state, self, action.counterparty)
+      if (contract === null || to === null) return null
+      return decideMarkets(state, {
+        type: 'SellDeedOption', player: self, contract, to,
+        price: amount(me.cleanCash, action.percent),
+      })
+    }
+
+    case 'exercise-option': {
+      const contract = at(optionsOf(state, self), action.contract)
+      if (contract === null) return null
+      return decideMarkets(state, { type: 'ExerciseDeedOption', player: self, contract })
+    }
+
+    case 'create-pool': {
+      const assets = poolableAssets(state, self).slice(0, 3)
+      if (assets.length < 3) return null
+      const poolId = scriptedId('pool', state, self, seq)
+      const cashflow = expectedPoolCashflow(state, {
+        id: poolId, originator: self, assets, tranches: [], terminated: false,
+      })
+      return decideSecuritization(state, {
+        type: 'CreatePool', player: self, poolId, assets,
+        seniorFace: amount(cashflow, action.seniorPercent),
+        mezzanineFace: amount(cashflow, action.mezzaninePercent),
+      })
+    }
+
+    case 'sell-tranche': {
+      const pool = at(state.pools.filter((p) => !p.terminated), action.pool)
+      const tranche = pool === null ? null : at(pool.tranches, action.tranche)
+      const to = otherThan(state, self, action.counterparty)
+      if (pool === null || tranche === null || to === null) return null
+      return decideSecuritization(state, {
+        type: 'SellTranche', player: self, poolId: pool.id, tranche: tranche.kind, to,
+        price: amount(tranche.face, action.percent),
+      })
+    }
+
+    case 'write-swap': {
+      const reference = at(swapReferences(state), action.reference)
+      const buyer = otherThan(state, self, action.counterparty)
+      if (reference === null || buyer === null) return null
+      const notional = amount(1_000, action.notionalPercent)
+      return decideSecuritization(state, {
+        type: 'WriteSwap', swapId: scriptedId('swap', state, self, seq),
+        buyer, seller: self, reference, notional,
+        premiumPerRound: amount(notional, action.premiumPercent),
+      })
+    }
+
+    case 'launch-venture':
+      return decideUnderworld(state, {
+        type: 'LaunchVenture', player: self,
+        venture: action.venture, fundedFrom: action.fundedFrom,
+      })
+
+    case 'speakeasy':
+      return decideUnderworld(state, {
+        type: 'PlaySpeakeasy', player: self, dice: action.dice, fundedFrom: action.fundedFrom,
+      })
+
+    case 'launder':
+      return decideUnderworld(state,
+        { type: 'LaunderCash', player: self, amount: amount(me.dirtyCash, action.percent) })
+
+    case 'bribe': {
+      const effect = briberyEffect(state, self, action.effect, action.target)
+      return effect === null ? null : decideUnderworld(state, { type: 'Bribe', player: self, effect })
+    }
+
+    case 'insider-trade':
+      return decideUnderworld(state,
+        { type: 'InsiderTrade', player: self, fundedFrom: action.fundedFrom })
+  }
+}
+```
+
+`draw-credit` and `write-swap` resolve their percentage against the flat constants `2_000`
+and `1_000` rather than a live balance, deliberately. Both are the arms where exceeding
+the limit is the *interesting* case — a draw above the borrowing base must be rejected,
+and a notional above the reference face must be rejected — so anchoring them to a live
+balance would tune the rejection away.
+
+- [ ] **Step 13: Write the driver**
+
+`packages/engine/tests/property/driver.ts`:
+
+```ts
+import { replay, reduce } from '../../src/core/reduce.js'
+import { isRejection, type Rejection } from '../../src/core/errors.js'
+import type { GameEvent } from '../../src/core/events.js'
+import type { GameState } from '../../src/core/state.js'
+import type { DeedId, DiceRoll, Era, PlayerId } from '../../src/core/types.js'
+import { ECONOMY } from '../../src/config/economy.js'
+import { createGame, decideSession } from '../../src/contexts/session/index.js'
+import { DRAFT_ROUNDS, availableDeeds, decideDraft } from '../../src/contexts/draft/index.js'
+import { decideBoard } from '../../src/contexts/board/index.js'
+import { decideDeck } from '../../src/contexts/decks/index.js'
+import {
+  exhaustLiquidation, playersAwaitingLiquidation,
+} from '../../src/contexts/credit/index.js'
+import type { GameScript, ScriptedDraftRound, ScriptedRound } from './arbitraries.js'
+import { dispatch } from './dispatch.js'
+
+export interface Batch { readonly label: string; readonly events: readonly GameEvent[] }
+
+export interface Trace {
+  /** `before[i]` is the state the batch at `batches[i]` was decided against. */
+  readonly before: readonly GameState[]
+  readonly batches: readonly Batch[]
+  readonly events: readonly GameEvent[]
+  readonly final: GameState
+  readonly accepted: number
+  readonly rejected: number
+  readonly skipped: number
+}
+
+class Run {
+  state: GameState
+  readonly before: GameState[] = []
+  readonly batches: Batch[] = []
+  accepted = 0
+  rejected = 0
+  skipped = 0
+
+  constructor(state: GameState) { this.state = state }
+
+  submit(label: string, produced: readonly GameEvent[] | Rejection | null): boolean {
+    if (produced === null) { this.skipped += 1; return false }
+    if (isRejection(produced)) { this.rejected += 1; return false }
+    this.before.push(this.state)
+    this.batches.push({ label, events: produced })
+    this.state = produced.reduce(reduce, this.state)
+    this.accepted += 1
+    return true
+  }
+
+  advance(label: string): void {
+    this.submit(label, decideSession(this.state, { kind: 'advance-phase' }))
+  }
+}
+
+function threeDistinct(available: readonly DeedId[], offset: number): readonly DeedId[] | null {
+  if (available.length < 3) return null
+  const start = Math.abs(offset) % available.length
+  const out: DeedId[] = []
+  for (let k = 0; out.length < 3 && k < available.length; k += 1) {
+    const id = available[(start + k) % available.length]
+    if (id !== undefined && !out.includes(id)) out.push(id)
+  }
+  return out.length === 3 ? out : null
+}
+
+function runDraft(run: Run, script: readonly ScriptedDraftRound[]): void {
+  for (let r = 0; r < DRAFT_ROUNDS; r += 1) {
+    const scripted = script[r]
+    run.state.config.turnOrder.forEach((player, i) => {
+      const ranked = threeDistinct(availableDeeds(run.state), scripted?.offsets[i] ?? i)
+      if (ranked === null) return
+      const [first] = ranked
+      const face = first === undefined ? 0 : run.state.deeds[first]?.faceValue ?? 0
+      const pct = scripted?.bidPercents[i] ?? 110
+      run.submit(`draft:${player}`, decideDraft(run.state, {
+        kind: 'submit-draft', player,
+        ranked: [ranked[0] ?? '', ranked[1] ?? '', ranked[2] ?? ''],
+        maxBid: Math.floor((face * pct) / 100),
+      }))
+    })
+    run.submit('draft:resolve', decideDraft(run.state, { kind: 'resolve-draft-round' }))
+  }
+}
+
+function runRound(run: Run, round: ScriptedRound): void {
+  const marker = run.batches.length
+  run.advance('market->open')
+
+  // Spec 19.8: forced liquidation resolves at the START of the Open phase, before
+  // any other action. Driving it here is the only way a generated history reaches
+  // distressed debt.
+  for (const player of playersAwaitingLiquidation(run.state)) {
+    run.submit(`liquidate:${player}`, exhaustLiquidation(run.state, player))
+  }
+
+  round.actions.forEach((action, i) => {
+    run.submit(`action:${action.kind}`, dispatch(run.state, action, i))
+  })
+
+  run.advance('open->movement')
+  run.state.config.turnOrder.forEach((player, i) => {
+    const dice: DiceRoll = round.rolls[i] ?? [1, 2]
+    run.submit(`roll:${player}`, decideBoard(run.state, { kind: 'roll-dice', player, dice }))
+    if (round.drawCard && i === 0) {
+      run.submit('draw-card', decideDeck(run.state, {
+        kind: 'draw-card', era: run.state.era, player,
+      }))
+    }
+  })
+
+  run.advance('movement->settlement')
+  run.submit('settle', decideSession(run.state, {
+    kind: 'settle',
+    input: {
+      auditDice: round.auditDice,
+      roundEvents: run.batches.slice(marker).flatMap((b) => b.events),
+    },
+  }))
+  run.advance('settlement->next')
+}
+
+export function runScript(script: GameScript): Trace {
+  const run = new Run(replay(createGame(script.config)))
+  for (const era of [1, 2, 3, 4] as const) {
+    run.submit(`shuffle:${era}`, decideDeck(run.state, {
+      kind: 'shuffle-deck', era, order: script.shuffles[era],
+    }))
+  }
+  run.advance('setup->draft')
+  runDraft(run, script.draft)
+  run.advance('draft->market')
+
+  const rounds = script.rounds.slice(0, ECONOMY.TOTAL_ROUNDS)
+  for (const round of rounds) {
+    if (run.state.phase === 'complete' || run.state.phase === 'scoring') break
+    runRound(run, round)
+  }
+
+  return {
+    before: run.before,
+    batches: run.batches,
+    events: run.batches.flatMap((b) => b.events),
+    final: run.state,
+    accepted: run.accepted,
+    rejected: run.rejected,
+    skipped: run.skipped,
+  }
+}
+```
+
+Two notes on the round loop. The driver never asserts a phase — it calls `advance-phase`
+and lets the session context decide where that lands, so a change to the phase machine
+shows up as a coverage failure rather than a silently truncated history. And `drawCard`
+fires only for the first player in turn order, because the card interpreter is by far the
+widest state mutation in the engine and four draws per round exhausts a 20-card era deck
+in five rounds.
+
+- [ ] **Step 14: Write `coverage.test.ts` — the test that proves the generator works**
+
+`packages/engine/tests/property/coverage.test.ts`. This is the test that keeps the other
+five honest. Every property below is a *lower bound on interestingness*: if a refactor
+starts rejecting every swap, these fail loudly instead of the invariants passing
+vacuously against empty histories.
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+import type { EventType } from '../../src/core/events.js'
+
+/** Runs 60 scripts once and reports which event types the generator actually reached. */
+function census(runs: number, rounds: number): { seen: Set<EventType>; accepted: number } {
+  const seen = new Set<EventType>()
+  let accepted = 0
+  fc.assert(
+    fc.property(arbGameScript(rounds), (script) => {
+      const trace = runScript(script)
+      accepted += trace.accepted
+      for (const e of trace.events) seen.add(e.type)
+      return true
+    }),
+    { numRuns: runs, seed: 20260803 },
+  )
+  return { seen, accepted }
+}
+
+describe('generator coverage', () => {
+  const { seen, accepted } = census(60, 12)
+
+  it('accepts a substantial majority of what it generates', () => {
+    expect(accepted).toBeGreaterThan(2_000)
+  })
+
+  it('reaches every core money event', () => {
+    for (const type of [
+      'DraftDeedAwarded', 'DiceRolled', 'TokenMoved', 'SalaryPaid', 'RentCharged',
+      'CarryingCostCharged', 'InterestAccrued', 'CreditDrawn', 'ObligationCapitalised',
+    ] as const) {
+      expect(seen.has(type), `never generated ${type}`).toBe(true)
+    }
+  })
+
+  it('reaches the credit crisis path', () => {
+    for (const type of ['MarginCallFlagged', 'DeedLiquidated', 'DistressedDebtIncurred'] as const) {
+      expect(seen.has(type), `never generated ${type}`).toBe(true)
+    }
+  })
+
+  it('reaches the underworld', () => {
+    for (const type of [
+      'VentureLaunched', 'DirtyCashEarned', 'CashLaundered', 'HeatChanged', 'AuditChecked',
+    ] as const) {
+      expect(seen.has(type), `never generated ${type}`).toBe(true)
+    }
+  })
+
+  it('reaches the instruments', () => {
+    for (const type of [
+      'RentFutureOriginated', 'DeedOptionWritten', 'PeerLoanOriginated',
+      'PoolCreated', 'WaterfallPaid', 'SwapWritten',
+    ] as const) {
+      expect(seen.has(type), `never generated ${type}`).toBe(true)
+    }
+  })
+
+  it('reaches a card draw', () => {
+    expect(seen.has('CardDrawn')).toBe(true)
+  })
+})
+```
+
+- [ ] **Step 15: Run the coverage test and watch it fail, then tune and commit**
+
+Run: `npx vitest run packages/engine/tests/property/coverage.test.ts`
+Expected: FAIL on the first missing event type. Fix the generator, not the assertion —
+the whole point is that lowering this bar silently disarms the suite. The two failures to
+expect are `MarginCallFlagged` (needs 12 rounds and an aggressive `draw-credit` tail;
+raise the round count before weakening anything) and `PoolCreated` (needs three poolable
+assets in one hand, which needs the peer-loan and futures arms landing first).
+
+```bash
+git add packages/engine/tests/property
+git commit -m "test(property): scripted-command generator and its coverage floor
+
+Commands, not events: every history is engine-produced and legal by
+construction. coverage.test.ts asserts the generator actually reaches
+margin calls, liquidation, laundering, audits, pools and swaps, so a
+future refactor that starts rejecting everything fails here loudly
+instead of making the invariant suite pass vacuously."
+```
+
+- [ ] **Step 16: Write `ledger.ts` — the conserved quantity and its boundary table**
+
+`packages/engine/tests/property/ledger.ts`. The identity is the one Task 3's board test
+and Task 12's header already use, extended by one term:
+
+```ts
+import { PLAYER_IDS } from '../../src/core/types.js'
+import type { Money } from '../../src/core/types.js'
+import type { GameState } from '../../src/core/state.js'
+import type { EventType, GameEvent } from '../../src/core/events.js'
+
+/**
+ * The conserved quantity.
+ *
+ *   sum(cleanCash) - sum(drawnCredit) - sum(distressedDebt) + treasury
+ *
+ * The bank sits OUTSIDE the pool, and the two per-player debt counters are how the
+ * pool records money the bank has lent into it. Drawing credit adds cash and adds an
+ * equal claim, so it nets to zero; repaying reverses it. The Treasury sits INSIDE the
+ * pool, which is why it is allowed to go negative — GO salary alone drives it to
+ * -$1,400 a round before any tax comes back.
+ *
+ * `dirtyCash` is deliberately absent. Ventures mint it from nothing and audits destroy
+ * it, so it is not money in this sense; it becomes money only at the laundering
+ * boundary, where the Treasury is the named counterparty that funds `cleanOut`.
+ *
+ * `distressedDebt` is the term Task 3's version omits. Without it, `CreditWrittenDown`
+ * — which moves a balance from `drawnCredit` to `distressedDebt` — reads as the
+ * creation of money, and it is not.
+ */
+export function conservedTotal(state: GameState): Money {
+  const held = PLAYER_IDS.reduce((total, id) => {
+    const p = state.players[id]
+    return total + p.cleanCash - p.drawnCredit - p.distressedDebt
+  }, 0)
+  return held + state.treasury
+}
+
+/**
+ * Events that move money across the pool boundary and therefore MUST name a
+ * counterparty inside it. The coverage test asserts the generator reaches them; the
+ * conservation test asserts each one nets to zero. Membership here is documentation,
+ * not an exemption.
+ */
+export const BANK_CROSSING_EVENTS: readonly EventType[] = [
+  'SalaryPaid', 'TaxPaid', 'JailExited', 'CarryingCostCharged', 'InterestAccrued',
+  'DistressedDebtAccrued', 'DistressedDebtRepaid', 'StimulusAdvanced',
+  'DraftDeedAwarded', 'DeedLiquidated', 'BuildingsStripped', 'PoolCollateralLiquidated',
+  'CashLaundered', 'AuditResolved', 'VentureLaunched', 'SpeakeasyPlayed',
+  'InsiderTradingUsed', 'BriberyUsed',
+] as const
+
+/**
+ * Money a batch is ALLOWED to add to or remove from the conserved pool.
+ *
+ * The table is deliberately empty. Every boundary crossing in the game has a named
+ * counterparty inside the identity: laundering proceeds come from the Treasury, fines
+ * and clean-funded costs go to it, seized dirty cash never entered the pool, and a
+ * bank purchase debits the Treasury. Adding an entry here is a claim that the engine
+ * creates or destroys money, and it must be justified in JUDGMENT CALLS before it
+ * is added.
+ */
+const UNCONSERVED: Partial<Record<EventType, (event: GameEvent) => Money>> = {}
+
+export function expectedDelta(events: readonly GameEvent[]): Money {
+  return events.reduce((total, event) => total + (UNCONSERVED[event.type]?.(event) ?? 0), 0)
+}
+```
+
+- [ ] **Step 17: Write `conservation.test.ts` and watch it fail**
+
+`packages/engine/tests/property/conservation.test.ts`. This is the single most important
+test in the engine. It asserts at *batch* granularity, not per event, because the
+obligation waterfall is intrinsically two events: the obligation credits its counterparty
+in full and the paired `ObligationCapitalised` raises the claim that funds the shortfall.
+Splitting them is exactly what the waterfall means.
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { reduce } from '../../src/core/reduce.js'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+import { conservedTotal, expectedDelta } from './ledger.js'
+
+describe('money is conserved', () => {
+  it('holds across every generated history, end to end', () => {
+    fc.assert(
+      fc.property(arbGameScript(14), (script) => {
+        const trace = runScript(script)
+        const opening = conservedTotal(trace.before[0] ?? trace.final)
+        expect(conservedTotal(trace.final)).toBe(opening + expectedDelta(trace.events))
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('holds batch by batch, so a failure names the decider that broke it', () => {
+    fc.assert(
+      fc.property(arbGameScript(14), (script) => {
+        const trace = runScript(script)
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          if (before === undefined) return
+          const after = batch.events.reduce(reduce, before)
+          expect(
+            conservedTotal(after),
+            `batch "${batch.label}" moved the pool: ${batch.events.map((e) => e.type).join(', ')}`,
+          ).toBe(conservedTotal(before) + expectedDelta(batch.events))
+        })
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('never counts dirty cash as money', () => {
+    // Ventures mint dirty cash from nothing. If it were in the pool, the first
+    // DirtyCashEarned would break the identity — so this asserts the omission is load
+    // bearing rather than an oversight.
+    fc.assert(
+      fc.property(arbGameScript(14), (script) => {
+        const trace = runScript(script)
+        const minted = trace.events
+          .filter((e) => e.type === 'DirtyCashEarned')
+          .reduce((t, e) => t + (e.type === 'DirtyCashEarned' ? e.amount : 0), 0)
+        const opening = conservedTotal(trace.before[0] ?? trace.final)
+        if (minted > 0) expect(conservedTotal(trace.final)).not.toBe(opening + minted)
+      }),
+      { numRuns: 100 },
+    )
+  })
+})
+```
+
+Run: `npx vitest run packages/engine/tests/property/conservation.test.ts`
+Expected: FAIL, with a shrunken script naming a batch. There are ten reducer cases that
+break the identity as the sibling tasks wrote them; Steps 18 and 19 reconcile them. Do
+not weaken the property to accommodate any of them.
+
+- [ ] **Step 18: Reconcile the six credit-side boundary crossings**
+
+Every fix below gives an existing crossing the counterparty it was missing. Modify
+`packages/engine/src/contexts/credit/reduce.ts`:
+
+```ts
+    /**
+     * Spec section 4 calls the Era II stimulus "an interest-bearing loan, not a grant".
+     * A loan is bank money, exactly like CreditDrawn, so the Treasury does not move.
+     * The version in Task 9 debited the Treasury AND raised the drawn balance, which
+     * destroyed $300 per player: the player owed the bank while the Treasury paid.
+     */
+    case 'StimulusAdvanced': {
+      const p = state.players[event.player]
+      return withPlayer(state, event.player, {
+        cleanCash: p.cleanCash + event.amount,
+        drawnCredit: p.drawnCredit + event.amount,
+      })
+    }
+
+    /**
+     * Spec 19.8: the Treasury is assessed the FULL obligation and the shortfall
+     * capitalises. Task 9 credited the Treasury only what the player could pay and
+     * routed the rest to distressed debt, which both leaked money and contradicted
+     * 19.8's rule that distressed debt is the terminal state, not a general bucket.
+     */
+    case 'CarryingCostCharged': {
+      const p = state.players[event.player]
+      const paid = Math.min(p.cleanCash, event.amount)
+      const next = withPlayer(state, event.player, { cleanCash: p.cleanCash - paid })
+      return { ...next, treasury: next.treasury + event.amount }
+    }
+
+    /** Accrued interest the player never pays is still Treasury income; it capitalises. */
+    case 'DistressedDebtAccrued': {
+      const p = state.players[event.player]
+      const next = withPlayer(state, event.player, {
+        distressedDebt: p.distressedDebt + event.amount,
+      })
+      return { ...next, treasury: next.treasury + event.amount }
+    }
+
+    /** Repaying the bank returns money to the Treasury rather than deleting it. */
+    case 'DistressedDebtRepaid': {
+      const p = state.players[event.player]
+      const next = withPlayer(state, event.player, {
+        cleanCash: p.cleanCash - event.amount,
+        distressedDebt: p.distressedDebt - event.amount,
+      })
+      return { ...next, treasury: next.treasury + event.amount }
+    }
+
+    /** The bank buys the buildings back, so the Treasury funds the sellback. */
+    case 'BuildingsStripped': {
+      // ... unchanged deed and supply bookkeeping ...
+      const credited = applyAgainstDebt(next, event.player, event.proceeds)
+      return { ...credited, treasury: credited.treasury - event.proceeds }
+    }
+
+    /** When the bank is the buyer of last resort, the Treasury is the buyer. */
+    case 'DeedLiquidated': {
+      let next = withDeed(state, event.deed, { owner: event.buyer })
+      next = event.buyer === 'bank'
+        ? { ...next, treasury: next.treasury - event.price }
+        : addCash(next, event.buyer, -event.price)
+      return applyAgainstDebt(next, event.player, event.price)
+    }
+```
+
+`DistressedDebtRepaid` and `DistressedDebtAccrued` are symmetric with `InterestAccrued`,
+which Task 9 already routes to the Treasury: the bank's income is Treasury income, and
+the pair is what makes `distressedDebt` a well-behaved negative-money term.
+
+Also update `contexts/credit/decide.ts` and `settleCarryingCost` so an unpayable carrying
+cost emits `ObligationCapitalised { obligation: 'carrying-cost' }` rather than
+`DistressedDebtIncurred`. Task 2's `ObligationKind` union already contains
+`'carrying-cost'`, so nothing new is needed there.
+
+Run: `npx vitest run packages/engine/src/contexts/credit`
+Expected: three Task 9 and Task 10 unit assertions fail on the changed Treasury figures —
+`treasury` at tasks-09-11 Step 12 (`5000 - 4 * ERA_II_STIMULUS` becomes `5000`), and the
+two carrying-cost shortfall cases. Update those three expectations and no others.
+
+- [ ] **Step 19: Reconcile the four markets and securitization crossings**
+
+Modify `packages/engine/src/contexts/securitization/reduce.ts`:
+
+```ts
+    /**
+     * The originator pays out exactly what is distributed, never what was collected.
+     * Subtracting `collected` deleted the residual whenever a pool had no equity
+     * tranche — `distribute` gives the residual to equity only if an equity tranche
+     * exists. `collected` remains on the event as the audit figure the ratings
+     * formula and the rulebook both read.
+     */
+    case 'WaterfallPaid': {
+      const pool = state.pools.find((p) => p.id === event.poolId)
+      const pools = state.pools.map((p) =>
+        p.id !== event.poolId ? p : {
+          ...p,
+          tranches: p.tranches.map((t) => {
+            const d = event.distributions.find((x) => x.tranche === t.kind)
+            return d === undefined ? t : { ...t, paid: t.paid + d.amount }
+          }),
+        })
+      if (pool === undefined) return { ...state, pools }
+      const paidOut = event.distributions.reduce((total, d) => total + d.amount, 0)
+      let next = subCash({ ...state, pools }, pool.originator, paidOut)
+      for (const d of event.distributions) {
+        const holder = pool.tranches.find((t) => t.kind === d.tranche)?.holder
+        if (holder !== undefined) next = addCash(next, holder, d.amount)
+      }
+      return next
+    }
+
+    /**
+     * Spec 19.4: collateral is sold TO THE BANK at the liquidation floor, so the
+     * Treasury funds the proceeds. The buildings on those deeds also return to the
+     * physical supply, which the original version dropped on the floor — it set
+     * `houses: 0` without crediting `housesRemaining`, permanently destroying
+     * components out of a fixed supply of 32 and 12.
+     */
+    case 'PoolCollateralLiquidated': {
+      const deeds: Record<DeedId, DeedState> = { ...state.deeds }
+      let houses = 0
+      let hotels = 0
+      for (const id of event.deeds) {
+        const deed = deeds[id]
+        if (deed === undefined) continue
+        houses += deed.houses === 5 ? 0 : deed.houses
+        hotels += deed.houses === 5 ? 1 : 0
+        deeds[id] = { ...deed, owner: 'bank', mortgaged: false, houses: 0 }
+      }
+      const withDeeds: GameState = {
+        ...state, deeds,
+        housesRemaining: state.housesRemaining + houses,
+        hotelsRemaining: state.hotelsRemaining + hotels,
+      }
+      const pool = state.pools.find((p) => p.id === event.poolId)
+      if (pool === undefined) return withDeeds
+      const credited = addCash(withDeeds, pool.originator, event.proceeds)
+      return { ...credited, treasury: credited.treasury - event.proceeds }
+    }
+```
+
+`subCash` floors the payer at zero, so `SwapPremiumPaid` and `SwapTriggered` currently
+mint the shortfall. Both are *automatic* obligations, so spec 19.8 applies: in
+`settleSwapPremiums` and in the round-24 trigger path, pair each transfer with
+`ObligationCapitalised` for the part the payer's clean cash could not cover. This needs
+two additions to `ObligationKind`, listed under NEW EVENTS REQUIRED below.
+
+Finally, in `packages/engine/src/contexts/markets/`, change the shortfall pairing on
+`payClean` from `DistressedDebtIncurred` to `ObligationCapitalised`. The comment on
+`payClean` at Task 14 states the opposite and must change with it: the identity does not
+"count distressed debt as issued money" so much as count it as *borrowed* money, and only
+the terminal path in spec 19.8 may create it.
+
+- [ ] **Step 20: Run the conservation property and watch it pass, then commit**
+
+Run: `npx vitest run packages/engine/tests/property/conservation.test.ts`
+Expected: PASS — 500 generated histories, roughly 40,000 batches, every one net zero.
+
+```bash
+git add packages/engine/src/contexts packages/engine/tests/property
+git commit -m "test(property): money is conserved across every generated history
+
+sum(cleanCash) - sum(drawnCredit) - sum(distressedDebt) + treasury is
+constant. Ten reducer cases had to be reconciled to make it true: the Era II
+stimulus double-counted, four bank purchases had no Treasury counterparty,
+the waterfall deleted its residual, pooled collateral destroyed houses out
+of a fixed supply, and three obligation shortfalls routed to distressed debt
+instead of capitalising as spec 19.8 requires."
+```
+
+- [ ] **Step 21: Write `replay.test.ts`**
+
+`packages/engine/tests/property/replay.test.ts`. This is the property that makes undo, the
+SQLite log, and the scripted 24-round E2E scenario all possible:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { reduce, replay } from '../../src/core/reduce.js'
+import { createGame } from '../../src/contexts/session/index.js'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+
+describe('replay identity', () => {
+  it('deep-equals the incrementally accumulated state', () => {
+    fc.assert(
+      fc.property(arbGameScript(14), (script) => {
+        const trace = runScript(script)
+        const log = [...createGame(script.config), ...trace.events]
+        expect(replay(log)).toEqual(trace.final)
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('is prefix-stable: replaying the first k events equals folding the first k', () => {
+    fc.assert(
+      fc.property(arbGameScript(8), fc.nat(), (script, k) => {
+        const trace = runScript(script)
+        const log = [...createGame(script.config), ...trace.events]
+        const cut = log.slice(0, k % (log.length + 1))
+        expect(replay(cut)).toEqual(cut.reduce(reduce, replay([])))
+      }),
+      { numRuns: 300 },
+    )
+  })
+
+  it('is idempotent under re-replay of its own log', () => {
+    fc.assert(
+      fc.property(arbGameScript(8), (script) => {
+        const log = [...createGame(script.config), ...runScript(script).events]
+        expect(replay(log)).toEqual(replay([...log]))
+      }),
+      { numRuns: 100 },
+    )
+  })
+
+  it('never mutates a state it was given', () => {
+    fc.assert(
+      fc.property(arbGameScript(8), (script) => {
+        const trace = runScript(script)
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          if (before === undefined) return
+          const snapshot = structuredClone(before)
+          batch.events.reduce(reduce, before)
+          expect(before).toEqual(snapshot)
+        })
+      }),
+      { numRuns: 60 },
+    )
+  })
+})
+```
+
+The prefix-stability case is the one that catches a reducer reading `state.round` where it
+should read the event's own field — a bug that a whole-log comparison misses because both
+sides make the same mistake. The no-mutation case catches a `push` into a `readonly`
+array, which TypeScript permits through any `as` cast that survived review.
+
+- [ ] **Step 22: Run the replay property and commit**
+
+Run: `npx vitest run packages/engine/tests/property/replay.test.ts`
+Expected: PASS, 660 generated histories.
+
+```bash
+git add packages/engine/tests/property/replay.test.ts
+git commit -m "test(property): replay(log) deep-equals accumulated state
+
+Prefix-stable and non-mutating too. This is the property the undo stack,
+the SQLite log and the scripted 24-round E2E scenario all rest on."
+```
+
+- [ ] **Step 23: Write `waterfall.test.ts`**
+
+`packages/engine/tests/property/waterfall.test.ts`. Task 16 already property-tests
+`distribute` in isolation against synthetic pools; this tests it against pools the engine
+actually built, and adds the settlement-level claim that the two unit tests cannot make:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+
+describe('the waterfall never overpays', () => {
+  it('distributes at most what the pool collected, in every generated history', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        for (const event of runScript(script).events) {
+          if (event.type !== 'WaterfallPaid') continue
+          const paid = event.distributions.reduce((t, d) => t + d.amount, 0)
+          expect(paid, `pool ${event.poolId} paid ${paid} of ${event.collected}`)
+            .toBeLessThanOrEqual(event.collected)
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('respects strict priority: mezzanine is paid only once senior is whole', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          if (before === undefined) return
+          for (const event of batch.events) {
+            if (event.type !== 'WaterfallPaid') continue
+            const pool = before.pools.find((p) => p.id === event.poolId)
+            const senior = pool?.tranches.find((t) => t.kind === 'senior')
+            const mezz = event.distributions.find((d) => d.tranche === 'mezzanine')
+            if (pool === undefined || senior === undefined || mezz === undefined) continue
+            const seniorPaid = event.distributions.find((d) => d.tranche === 'senior')?.amount ?? 0
+            expect(senior.paid + seniorPaid).toBe(senior.face)
+          }
+        })
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('never pays a tranche beyond its face', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        for (const state of [runScript(script).final]) {
+          for (const pool of state.pools) {
+            for (const tranche of pool.tranches) {
+              if (tranche.kind === 'equity') continue
+              expect(tranche.paid).toBeLessThanOrEqual(tranche.face)
+            }
+          }
+        }
+      }),
+      { numRuns: 150 },
+    )
+  })
+})
+```
+
+Equity is excluded from the face bound deliberately. Spec 19.3 gives equity a *claim*
+rather than a face, and the residual arm of `distribute` pays it whatever is left, which
+can and should exceed the nominal figure the pool was created with.
+
+- [ ] **Step 24: Run the waterfall property and commit**
+
+Run: `npx vitest run packages/engine/tests/property/waterfall.test.ts`
+Expected: PASS, 550 generated histories.
+
+```bash
+git add packages/engine/tests/property/waterfall.test.ts
+git commit -m "test(property): a pool never distributes more than it collected
+
+Against pools the engine actually built, not synthetic ones. Adds strict
+priority and the per-tranche face bound, with equity excluded because
+spec 19.3 gives it a residual claim rather than a face."
+```
+
+- [ ] **Step 25: Write the cash and credit invariants**
+
+`packages/engine/tests/property/invariants.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { PLAYER_IDS } from '../../src/core/types.js'
+import { borrowingBase, creditHeadroom } from '../../src/contexts/credit/index.js'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+import type { GameState } from '../../src/core/state.js'
+
+/** Every state the run passed through, including the final one. */
+function statesOf(script: Parameters<typeof runScript>[0]): readonly GameState[] {
+  const trace = runScript(script)
+  return [...trace.before, trace.final]
+}
+
+describe('clean cash never goes negative', () => {
+  it('holds at every state in every generated history', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        for (const state of statesOf(script)) {
+          for (const id of PLAYER_IDS) {
+            expect(state.players[id].cleanCash,
+              `${id} went negative in round ${state.round}`).toBeGreaterThanOrEqual(0)
+          }
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('turns every shortfall into drawn credit, never into a negative balance', () => {
+    // The paired-event claim: any batch that drove a player's clean cash to exactly
+    // zero while an obligation was outstanding must carry an ObligationCapitalised.
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          const after = trace.before[i + 1] ?? trace.final
+          if (before === undefined) return
+          for (const id of PLAYER_IDS) {
+            const drop = before.players[id].cleanCash - after.players[id].cleanCash
+            const capitalised = batch.events
+              .filter((e) => e.type === 'ObligationCapitalised' && e.player === id)
+              .reduce((t, e) => t + (e.type === 'ObligationCapitalised' ? e.amount : 0), 0)
+            if (capitalised > 0) {
+              expect(after.players[id].cleanCash).toBe(0)
+              expect(drop).toBeGreaterThanOrEqual(0)
+            }
+          }
+        })
+      }),
+      { numRuns: 150 },
+    )
+  })
+})
+
+describe('the capped / uncapped asymmetry', () => {
+  it('never lets a VOLUNTARY draw exceed the borrowing base', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          if (before === undefined) return
+          for (const event of batch.events) {
+            if (event.type !== 'CreditDrawn') continue
+            expect(event.amount,
+              `voluntary draw of ${event.amount} exceeded headroom`)
+              .toBeLessThanOrEqual(creditHeadroom(before, event.player))
+          }
+        })
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('lets an AUTOMATIC obligation exceed it, and that is the only way it happens', () => {
+    // Spec 19.8: step 2 of the waterfall is deliberately uncapped, and it is the sole
+    // mechanism by which a drawn balance comes to exceed a borrowing base. So every
+    // breach must be attributable to a batch containing ObligationCapitalised.
+    fc.assert(
+      fc.property(arbGameScript(20), (script) => {
+        const trace = runScript(script)
+        let breached = new Set<string>()
+        trace.batches.forEach((batch, i) => {
+          const before = trace.before[i]
+          const after = trace.before[i + 1] ?? trace.final
+          if (before === undefined) return
+          for (const id of PLAYER_IDS) {
+            const wasClear = before.players[id].drawnCredit <= borrowingBase(before, id)
+            const nowOver = after.players[id].drawnCredit > borrowingBase(after, id)
+            if (wasClear && nowOver) {
+              breached.add(id)
+              const uncapped = batch.events.some((e) =>
+                (e.type === 'ObligationCapitalised' || e.type === 'EncumbranceExtinguished')
+                && 'player' in e && e.player === id)
+              const baseFell = borrowingBase(after, id) < borrowingBase(before, id)
+              expect(uncapped || baseFell,
+                `${id} breached in batch "${batch.label}" with no capitalisation and no base fall`)
+                .toBe(true)
+            }
+          }
+        })
+        return true
+      }),
+      { numRuns: 200 },
+    )
+  })
+})
+
+describe('borrowing base and margin calls', () => {
+  it('never computes a negative borrowing base', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        for (const state of statesOf(script)) {
+          for (const id of PLAYER_IDS) {
+            expect(borrowingBase(state, id)).toBeGreaterThanOrEqual(0)
+          }
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('never leaves a drawn balance above the base once Settlement has run', () => {
+    // Settlement step 10 flags every breach. So at any state whose phase has passed
+    // settlement in the round, drawn > base implies marginCallFlaggedAt is set.
+    fc.assert(
+      fc.property(arbGameScript(20), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          if (state.phase !== 'market' && state.phase !== 'open') continue
+          for (const id of PLAYER_IDS) {
+            const p = state.players[id]
+            if (p.drawnCredit > borrowingBase(state, id)) {
+              expect(p.marginCallFlaggedAt,
+                `${id} is over base in round ${state.round} without a flag`).not.toBeNull()
+            }
+          }
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+})
+
+describe('heat and dirty cash', () => {
+  it('never goes negative, and heat stays inside its band', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        for (const state of statesOf(script)) {
+          for (const id of PLAYER_IDS) {
+            const p = state.players[id]
+            expect(p.dirtyCash).toBeGreaterThanOrEqual(0)
+            expect(p.heat).toBeGreaterThanOrEqual(0)
+            expect(Number.isInteger(p.heat)).toBe(true)
+          }
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('keeps every money field an integer number of dollars', () => {
+    fc.assert(
+      fc.property(arbGameScript(12), (script) => {
+        for (const state of statesOf(script)) {
+          for (const id of PLAYER_IDS) {
+            const p = state.players[id]
+            for (const v of [p.cleanCash, p.dirtyCash, p.drawnCredit, p.distressedDebt]) {
+              expect(Number.isInteger(v)).toBe(true)
+            }
+          }
+          expect(Number.isInteger(state.treasury)).toBe(true)
+        }
+      }),
+      { numRuns: 150 },
+    )
+  })
+})
+```
+
+The margin-call property is stated over `market` and `open` phases only, and that
+weakening is deliberate rather than convenient. Within a Settlement, steps 3 through 9
+raise drawn balances *before* step 10 flags them, so a mid-Settlement state is legitimately
+over base and unflagged. Restricting to phases outside Settlement is the honest form of
+"drawn never exceeds base outside a flagged margin call" from spec section 15.
+
+- [ ] **Step 26: Write `deeds.test.ts`**
+
+`packages/engine/tests/property/deeds.test.ts`. Deed and component integrity is the one
+property that never reads a cash balance, which is why it lives in its own file:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
+import { DEED_IDS, totalFaceValue } from '../../src/config/board.js'
+import { ECONOMY } from '../../src/config/economy.js'
+import { PLAYER_IDS } from '../../src/core/types.js'
+import { arbGameScript } from './arbitraries.js'
+import { runScript } from './driver.js'
+
+const OWNERS = new Set<string>([...PLAYER_IDS, 'bank'])
+
+describe('deed integrity', () => {
+  it('keeps exactly the 28 deeds, with exactly one owner each', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          const ids = Object.keys(state.deeds)
+          expect(ids.length).toBe(DEED_IDS.length)
+          expect([...ids].sort()).toEqual([...DEED_IDS].sort())
+          for (const id of DEED_IDS) {
+            const deed = state.deeds[id]
+            expect(deed).toBeDefined()
+            if (deed === undefined) continue
+            expect(deed.id).toBe(id)
+            expect(deed.owner === null || OWNERS.has(deed.owner)).toBe(true)
+          }
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('keeps the 28 face values summing to exactly $5,690 forever', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          const sum = Object.values(state.deeds).reduce((t, d) => t + d.faceValue, 0)
+          expect(sum).toBe(5_690)
+          expect(sum).toBe(totalFaceValue())
+        }
+      }),
+      { numRuns: 150 },
+    )
+  })
+
+  it('never lets a player hold a deed twice, or two players hold one deed', () => {
+    // Structural in the state shape, but a trade or liquidation that rebuilt the record
+    // could drop or duplicate an entry, and the count assertion above would still pass
+    // if it both dropped one and duplicated another.
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          const holdings = PLAYER_IDS.flatMap((id) =>
+            Object.values(state.deeds).filter((d) => d.owner === id).map((d) => d.id))
+          expect(new Set(holdings).size).toBe(holdings.length)
+        }
+      }),
+      { numRuns: 150 },
+    )
+  })
+
+  it('conserves the physical house and hotel supply', () => {
+    fc.assert(
+      fc.property(arbGameScript(16), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          const placed = Object.values(state.deeds).reduce(
+            (acc, d) => d.houses === 5
+              ? { houses: acc.houses, hotels: acc.hotels + 1 }
+              : { houses: acc.houses + d.houses, hotels: acc.hotels },
+            { houses: 0, hotels: 0 },
+          )
+          expect(placed.houses + state.housesRemaining).toBe(ECONOMY.HOUSE_SUPPLY)
+          expect(placed.hotels + state.hotelsRemaining).toBe(ECONOMY.HOTEL_SUPPLY)
+          expect(state.housesRemaining).toBeGreaterThanOrEqual(0)
+          expect(state.hotelsRemaining).toBeGreaterThanOrEqual(0)
+        }
+      }),
+      { numRuns: 200 },
+    )
+  })
+
+  it('keeps every house count inside 0-5', () => {
+    fc.assert(
+      fc.property(arbGameScript(12), (script) => {
+        const trace = runScript(script)
+        for (const state of [...trace.before, trace.final]) {
+          for (const deed of Object.values(state.deeds)) {
+            expect(deed.houses).toBeGreaterThanOrEqual(0)
+            expect(deed.houses).toBeLessThanOrEqual(5)
+          }
+        }
+      }),
+      { numRuns: 100 },
+    )
+  })
+})
+```
+
+The house-supply property is the one that found the `PoolCollateralLiquidated` bug fixed
+in Step 19: that case set `houses: 0` without returning the components to the supply, so
+a pooled loan default permanently destroyed houses out of a fixed pool of 32.
+
+- [ ] **Step 27: Pin the run budget and make failures reproducible**
+
+`packages/engine/tests/property/setup.ts`:
+
+```ts
+import fc from 'fast-check'
+
+/**
+ * Property runs are the slowest thing in the suite, so the budget is explicit rather
+ * than per-file. CI raises it; a local watch run keeps it low enough to stay honest.
+ *
+ * `verbose` prints the shrunken counterexample, and because the engine has no
+ * Math.random and no Date, that counterexample is a complete reproduction: paste the
+ * printed seed and path into `fc.assert`'s options and the same history replays exactly.
+ */
+fc.configureGlobal({
+  numRuns: process.env['CI'] === 'true' ? 500 : 100,
+  verbose: 1,
+  interruptAfterTimeLimit: 120_000,
+  markInterruptAsFailure: false,
+})
+```
+
+Modify `packages/engine/vitest.config.ts` to load it for the property directory only:
+
+```ts
+    setupFiles: ['./tests/property/setup.ts'],
+    testTimeout: 180_000,
+```
+
+The per-file `numRuns` written into each `fc.assert` above stays; `configureGlobal` sets
+the default for any assertion that omits one and caps total wall time so a pathological
+shrink cannot hang CI.
+
+- [ ] **Step 28: Run the whole property suite**
+
+Run: `npx vitest run packages/engine/tests/property`
+Expected: PASS — seven files, roughly 3,000 generated histories, under three minutes.
+
+If any file times out, the cause is almost always `arbGameScript(20)` in the margin-call
+properties: 20 rounds of four players with eight actions each is about 700 decider calls
+per run. Lower the round count on that property rather than the run count on all of them,
+because rounds buy state depth and runs buy state breadth, and these invariants fail on
+depth.
+
+- [ ] **Step 29: Run the full suite, typecheck and lint, then commit Task 20**
+
+Run: `npm run lint && npm run typecheck && npm test`
+Expected: PASS.
+
+```bash
+git add packages/engine/tests/property packages/engine/vitest.config.ts
+git commit -m "test(property): the seven invariants from spec section 15
+
+Money conservation, replay identity, the waterfall bound, non-negative
+clean cash, the capped/uncapped draw asymmetry, non-negative borrowing
+base with flagged breaches, and deed plus component integrity. Every
+history is generated as scripted COMMANDS run through the real deciders,
+so every event under test is engine-produced and legal by construction."
+```
+
+---
+
+## NEW EVENTS REQUIRED
+
+Neither section existed in this file, though Task 18 and Task 19 both refer forward to
+them. Both are written here, covering Tasks 18, 19 and 20 together.
+
+| Symbol | Shape | Task | Why the existing vocabulary cannot carry it |
+|---|---|---|---|
+| `DeckReordered` | `{ type: 'DeckReordered'; era: Era; player: PlayerId; order: readonly number[] }` | 18 | Card E3-05 lets a player choose a permutation of the remaining deck. Every other card effect is a pure function of `(card, state-at-draw)` and needs no event, but a *player-chosen* order is external input. `DeckShuffled` cannot carry it: that event means "the deck was shuffled at setup" and the decks reducer resets `drawn` on it. |
+| `DistressedDebtRepaid` | `{ type: 'DistressedDebtRepaid'; player: PlayerId; amount: Money }` | 10 | Task 10 reduces it and Task 20 asserts against it, but Task 2's union never declared it. `CreditRepaid` is the wrong event — it moves the drawn balance, and spec 19.7 makes distressed debt a separate 15%-compounding instrument that is never automatically swept. |
+| `CreditWrittenDown` | `{ type: 'CreditWrittenDown'; player: PlayerId; amount: Money }` | 10 | The terminal step of spec 19.8: liquidation exhausted, the residual drawn balance converts to distressed debt. Same omission from Task 2. |
+| `BuildingsStripped` | `{ type: 'BuildingsStripped'; player: PlayerId; deeds: readonly DeedId[]; proceeds: Money }` | 10 | Declared in Task 10's own table; repeated here because Task 20's ledger depends on it. `HouseSold` is per deed per house and cannot express an atomic group strip. |
+| `EncumbranceExtinguished` | `{ type: 'EncumbranceExtinguished'; player: PlayerId; holder: PlayerId; contract: ContractId; amount: Money }` | 10 | Spec 19.12. Same reason. |
+| `ObligationKind` gains `'swap-payout'` | — | 20 | `SwapTriggered` pays the protection buyer from the seller's clean cash. When the seller is short, spec 19.8 capitalises the gap, and `ObligationCapitalised` requires a kind. None of the eight existing kinds fits: it is not a premium. |
+| `ObligationKind` gains `'make-whole'` | — | 20 | `RentFutureMadeWhole` and the option-premium refund inside `EncumbranceExtinguished` are both automatic obligations on the deed owner. Same argument. |
+| `InterestAccrued` **loses** `capitalised` | `{ type: 'InterestAccrued'; player: PlayerId; amount: Money; rate: number }` | 11 | Task 9 added a `capitalised: boolean` that Task 2 never declared; Task 11 Step 1 already replaces it with a paired `ObligationCapitalised`. Recorded here so the field does not survive into `core/events.ts` by accident. |
+
+Everything else Task 20 needs already exists. In particular the property suite adds **no**
+event of its own: it observes, it does not emit.
+
+---
+
+## JUDGMENT CALLS
+
+**The conserved quantity includes `distressedDebt`.** Task 3's board test and Task 12's
+header both write the identity as `sum(cleanCash) - sum(drawnCredit) + treasury`. That
+form is broken by `CreditWrittenDown`, which moves a balance from one bucket to the other
+and reads as +amount of new money. Adding the third term fixes it and costs nothing:
+distressed debt is borrowed money by any reading of spec 19.8, and it is only ever created
+from a drawn balance or an unpayable obligation.
+
+**Dirty cash is outside the pool.** Ventures mint it, audits destroy it, and neither has a
+counterparty. The one place it becomes money is laundering, where the Treasury funds
+`cleanOut` — which Task 12's reducer already does. A third conservation property asserts
+the omission is load-bearing rather than an oversight, by checking that the final total
+does *not* move by the amount minted.
+
+**Conservation is asserted per batch, not per event.** The obligation waterfall is
+intrinsically two events — the obligation credits its counterparty in full, and
+`ObligationCapitalised` raises the claim that funds the shortfall. Per-event conservation
+would be false by design. Per-batch is the finest granularity at which the property is
+true, and it is also the granularity the server appends at, so it is the right one.
+
+**The generator produces commands, not events.** The tradeoff is bias: rejected commands
+are discarded, so the sampled distribution is the distribution of *legal* histories, which
+under-samples anything reachable only through a narrow window. `coverage.test.ts` is the
+mitigation and it is not optional — without it, a refactor that starts rejecting every
+swap makes six property files pass vacuously. The alternative, generating raw events and
+feeding `reduce` directly, was rejected: it tests reducer behaviour on inputs `decide`
+never produces, and every failure it reports would first need triage for whether the input
+was reachable at all.
+
+**A rejection is a pass, not a failure.** The driver counts rejections and moves on. Any
+other choice makes the generator's job "produce only legal commands", which is the
+engine's job, and would push the legality rules into the test fixture where they would
+drift.
+
+**LIQUIDATION_FLOOR is 0.8, and the spec says 0.7 in two places.** Spec 19.4 says
+collateral is sold at "the standard liquidation floor of 70% of face value" and spec
+section 15's E2E scenario 2 says "forced liquidation at the 70% floor". `ECONOMY` says
+`0.8`, spec section 5's convergence argument requires strictly greater than
+`DEED_ADVANCE_RATE` of 0.75, and Task 20's Step 1 asserts 0.8. **0.8 is correct** and the
+two spec sentences are stale: at 0.7 the invariant asserted at startup fails and forced
+liquidation provably diverges. Flagged rather than silently reconciled because it changes
+a printed rulebook number.
+
+**The margin-call property excludes mid-Settlement states.** Spec section 15 states it
+unconditionally — "drawn balance never exceeds base outside a flagged margin call" — but
+spec 19.1 orders flagging at step 10, after six steps that raise drawn balances. The
+unconditional form is false against the engine's own required ordering. Stated over
+`market` and `open` phases, which is where it is both true and meaningful.
+
+**The capped/uncapped property allows a second cause.** A player can breach without any
+capitalisation if their *base* fell — a deed traded away, a peer-loan default halving the
+base, an encumbrance extinguished. So the property asserts `capitalised || baseFell`
+rather than `capitalised` alone. This weakens it, and the weakening is real: a bug that
+lowered the base spuriously would be admitted here. It is caught instead by the
+non-negative-base property and by Task 9's unit tests on `borrowingBase`.
+
+**Equity is exempt from the per-tranche face bound.** Spec 19.3 gives equity a claim, not
+a face, and `distribute` pays it the residual. Asserting `paid <= face` on equity would
+fail on exactly the histories where the pool performed well.
+
+**`create-pool` takes the first three poolable assets rather than three generated slots.**
+When a player holds three or four poolable assets, generating three distinct slot indices
+into that list is almost pure rejection. Taking the first three costs variety in *which*
+assets get pooled and buys roughly an order of magnitude in how often a pool exists at
+all. The count guard still rejects when there are fewer than three.
+
+**Card draws are not gated on landing square.** The driver issues `draw-card` during
+Movement on a scripted boolean, which draws cards far more often than the board would.
+This over-samples the card interpreter deliberately — it is the largest body of
+state-mutating code in the engine — and it is legal, because `decideDeck` gates only on
+phase and deck exhaustion. It means the suite tests *what happens* when a card is drawn,
+never *whether* it should have been.
+
+---
+
+### Invariants that could NOT be expressed as property tests
+
+Four, and each is named here rather than quietly dropped.
+
+**1. "Distressed debt arises in exactly one circumstance."** Spec 19.8 makes this a claim
+about *provenance* — a margin call went uncured, liquidation ran, and it stopped for want
+of unmortgaged deeds. Provenance is a property of the causal chain, not of any state, and
+the batch structure does not carry causality. The reachable approximation is: at the state
+in which `DistressedDebtIncurred` appears, the player holds no unmortgaged deeds. That is
+strictly weaker — it admits distressed debt created for the wrong reason at a moment when
+the player happens to be out of deeds — and it is asserted in Task 10's unit tests rather
+than here, where it would read as stronger than it is.
+
+**2. Determinism, and the absence of `Math.random` / `Date`.** These are properties of the
+*source*, not of any generated history. A property test cannot observe them: an engine
+that called `Math.random` would still satisfy every invariant above. Task 1's grep test
+over the built output is the correct instrument.
+
+**3. The 1.19 doubles factor and the Markov landing probabilities.** Statistical claims
+about a distribution, needing a convergence test with a tolerance, not a universally
+quantified predicate. They belong to Task 5 with the Markov chain that produces them.
+
+**4. "Heat decays in any round with no deliberate dirty action."** Expressible only over a
+round's whole event history, and the driver's batches do not align with rounds — a
+Settlement is one batch and an Open phase is many. Task 12's unit tests assert it directly
+against the reducer, which is where the rule lives.
+
+---
+
+### Contradictions between sibling task files
+
+Recorded here because Task 20 is the last task authored and the only one that reads all
+six parts against each other. None is fixed by Task 20 except where a step above says so.
+
+**1. `HouseBuilt`, `HouseSold`, `DeedMortgaged`, `DeedUnmortgaged` and `DeedTraded` have
+no owning task.** They are declared in Task 2's event union and referenced by spec 19.6,
+by the even-build rule, and by Task 10's liquidation, but no task in the plan set writes a
+decider or a reducer for any of them. `board` owns movement and rent; `credit` owns
+`BuildingsStripped` only. This is the largest gap in the plan and it is why the generator
+has no build, mortgage or trade arm: **the property suite cannot exercise development at
+all.** A `property` or `development` context task is needed, sized somewhere near Task 5.
+
+**2. Command discriminants are split between `kind` and `type`.** `SessionCommand`,
+`BoardCommand`, `DraftCommand` and `DeckCommand` discriminate on `kind`; `CreditCommand`,
+`UnderworldCommand`, `MarketsCommand` and `SecuritizationCommand` discriminate on `type`.
+A single root `decide` cannot dispatch on one field. `core/commands.ts` is listed in the
+main plan's file structure and written by nobody, which is presumably where this would
+have surfaced.
+
+**3. Three different treatments of the same obligation shortfall.** `board` capitalises
+into drawn credit and pays the Treasury in full (spec-conformant). `credit`'s
+`CarryingCostCharged` pays the Treasury only what the player could afford and routes the
+rest to `DistressedDebtIncurred`. `markets`' `payClean` floors the payer and routes the
+shortfall to `DistressedDebtIncurred`, with a comment instructing Task 20 to "count
+distressed debt as issued money". Spec 19.8 has exactly one waterfall and it capitalises.
+Step 18 and Step 19 above reconcile the latter two to the first.
+
+**4. Task 19 states that Task 11 is "ABSENT from the plan set".** It is not — Task 11 is
+in `tasks-09-11.md` at line 2037 and exports both symbols the comment says are missing,
+`settlePeerLoans` and `activeLoans`. The comment is stale and should be deleted, not acted
+on.
+
+**5. `isWholeDollars` is imported by Task 9 and defined by Task 20.** `contexts/credit/
+decide.ts` imports it from `core/money.js` in Task 9, but Task 2 does not define it and
+Step 6 above is what adds it. Whichever task lands first must carry the definition;
+Task 20's Step 6 is written to be idempotent if Task 9 has already added it.
+
+**6. `credit` and `session` each own a `settlement.ts`.** Task 11's peer-loan tests import
+`settlePeerLoans` from `./settlement.js` inside the credit context, while Task 19 puts the
+eleven-step `SETTLEMENT_STEPS` sequence in `contexts/session/settlement.ts`. Both are
+legitimate — per-step generators live with their context, the ordering lives with session
+— but the identical filename across two contexts is a trap for anyone grepping.
+
+**7. `RejectionCode` is extended by four tasks independently.** Task 2 declares the union;
+Tasks 11, 14, 15 and 16 each append to it, with Task 11 noting that four of its five
+additions are "shared with Tasks 14-16 and whichever task merges first writes the
+identical literal". `SWAP_NOTIONAL_EXCEEDS_FACE` is used by Task 17 and declared by no
+task at all.
