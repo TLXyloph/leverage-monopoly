@@ -1,17 +1,18 @@
 # LEVERAGE — Player Rulebook
 
-> **Every figure in this rulebook is final.** The five most likely to catch you out:
+> **Every figure in this rulebook is final.** The six most likely to catch you out:
 >
 > - Your starting budget is **$2,500**, and it pays for the draft *and* everything after it.
 > - GO pays **$350**.
 > - You pay a **carrying cost of $8 per unmortgaged deed, every Settlement, from round 1.**
 > - Your borrowing base is **75% of unmortgaged deed face value + 50% of building cost.**
-> - The round-7 stimulus is **a loan, not a gift.**
+> - **Houses and hotels cost 90% of the standard Monopoly price.** The prices printed on the physical deed cards are wrong. Use section 8.
+> - Anything you cannot pay in cash is **added to your credit line automatically**. You are never stuck.
 >
 > **The published Monopoly landing-probability tables do not apply to this game.** The era
 > decks contain no movement cards, so every square is a resting square and every widely
-> cited figure — Illinois 3.19%, Jail 6.2%, GO 3.10% — is wrong here. Use the numbers in
-> section 8 and nothing else.
+> cited figure — Illinois 3.19%, Jail 6.2%, GO 3.10% — is wrong here. Use section 8 and
+> nothing else.
 
 ---
 
@@ -21,7 +22,7 @@ You are playing Monopoly with the luck taken out of acquisition and put into a b
 
 Before anyone rolls, all 28 deeds are handed out in a seven-round sealed-bid draft. You end with exactly seven. Nobody starts with a monopoly; almost nobody finishes with one either, so you trade.
 
-The game runs exactly 24 rounds. Nobody goes bankrupt and nobody is eliminated. If you cannot pay, the shortfall becomes debt that compounds against you at 15% a round, and you keep playing.
+The game runs exactly 24 rounds. Nobody goes bankrupt and nobody is eliminated. Any bill you cannot pay in cash is simply added to your credit line, so play never stops for anybody.
 
 Every deed you hold costs you $8 a round to keep. That drain is why you will borrow, and borrowing is why the rest of the game exists: credit lines, loans to the other players, contracts on future rent, pooled securities backed by those contracts, insurance on the securities, and a small vice economy.
 
@@ -37,7 +38,7 @@ At the end, the app totals everyone's net worth. Highest number wins.
 2. One die roll sets turn order for the entire game. It matters less than you think — no property is acquired by landing, so turn order only sets the order of movement within a round.
 3. The draft runs. Seven rounds, all simultaneous, no dice.
 
-Across the table the draft will consume roughly **$6,300** of the $10,000 in play, leaving each player around **$925** in operating cash. That number is your real constraint. Overspend in the draft and you enter round 1 unable to absorb a single hoteled rent bill.
+Across the table the draft will consume roughly **$6,300** of the $10,000 in play, leaving each player around **$925** in operating cash. That number is your real constraint.
 
 ### What you submit each draft round
 
@@ -132,7 +133,7 @@ Negotiate out loud. Enter the deal in your own view. The facilitator is not a bo
 
 Roll the physical dice. The facilitator enters the result. The app resolves the landing: rent, tax, a card draw, GO, Jail.
 
-Rolling doubles gives you another roll. Three consecutive doubles sends you to Jail without moving. If you are in Jail, you pay $50 and leave on your next turn — this is mandatory, not optional, and you do not roll to escape.
+Rolling doubles gives you another roll. Three consecutive doubles sends you to Jail without moving. If you are in Jail, you pay $50 and leave on your next turn — this is mandatory, not optional, and you do not roll to escape. **Nobody ever misses a round**, so all four players are always on the board.
 
 **All six card squares are ordinary squares here.** Nothing on this board moves you except Go To Jail. Landing on a Chance or Community Chest square draws an era card that affects money, credit, Heat or instruments, and you stay exactly where you are.
 
@@ -166,38 +167,58 @@ Read what happened to you. Anything flagged must be dealt with in the next Open 
 
 **Prevailing rate: 5% per round.**
 
+### How paying anything works
+
+There is one payment path in this game and it covers every obligation — rent, interest, carrying cost, taxes, audit fines, CDS premiums, loan interest, all of it:
+
+```
+1.  Pay from clean cash, as far as it goes.
+2.  Any shortfall is ADDED TO YOUR DRAWN CREDIT BALANCE, automatically,
+    whether or not you have the borrowing base for it.
+3.  There is no step three.
+```
+
+**You are never unable to pay.** A bill you cannot cover does not stop the game, does not sell your deeds, and does not create a penalty. It becomes debt at the era rate.
+
+The one thing it can do is push your drawn balance past your borrowing base, which is a **margin call**. That is the only route by which anything bad happens to you, and it is why the distinction matters: **money you take out on purpose is capped at your borrowing base; money the game charges you is not.** Voluntary draws stop at the ceiling. Obligations go straight through it.
+
+So the practical question is never "can I pay this?" It is always "does paying this put me over my base?"
+
 ### The carrying cost
 
 **Every Settlement, from round 1, you pay $8 for each unmortgaged deed you own.** Buildings are not charged. With seven deeds that is **$56 a round**, every round, whether or not anyone lands on anything.
 
 This is the most important number in Era I. Rent is a transfer between players and nets to zero across the table, so without a drain the economy would have income but no pressure and nobody would ever need to borrow. The carrying cost is what makes credit — and therefore everything in Eras II and III — actually happen. GO pays $350 rather than the standard $200 specifically to sit against it; neither number means anything alone.
 
-**It also makes mortgaging a live lever rather than an act of desperation.** Mortgaging a deed stops its $8 immediately. You give up the rent and 75% of its face from your borrowing base, and you get half its face in cash plus $8 a round back. On a cheap deed nobody lands on, in a stretch where you need neither the rent nor the base, that trade is sometimes simply correct.
-
 ### Rent
 
-You collect rent when an opponent's token comes to rest on a deed you own and is unmortgaged.
+You collect rent when an opponent's token comes to rest on a deed you own and is unmortgaged. **The owner never owes rent on their own deed.** Three players can owe you rent, not four.
 
-**The owner never owes rent on their own deed.** Three players can owe you rent, not four.
-
-- **Undeveloped property:** base rent. **If you own the entire colour group and none of it is developed, the base rent doubles.**
-- **Developed property:** the rent for its current number of houses, from the tables in section 8.
-- **Railroads:** $25, $50, $100 or $200 depending on how many of the four you own.
+- **Undeveloped property:** base rent, from the table in section 8.
+- **The colour-group double:** if you own **every deed in a colour group**, rent doubles on each deed in that group **that has no houses on it**. This is per deed, not per set — putting houses on one deed does not stop its undeveloped siblings from paying double.
+- **Developed property:** the rent for its current number of houses.
+- **Railroads:** $25, $50, $100 or $200 for one, two, three or four owned.
 - **Utilities:** 4× the dice roll if you own one, 10× if you own both.
+
+> **Mortgaged deeds do not count as owned.** A mortgaged deed counts toward neither the colour-group ownership test nor the railroad and utility owned-counts.
+>
+> This bites harder than it reads. Mortgage one of your four railroads and you now own three, so the other three drop from $200 to $100 each. Your expected railroad income falls from about **$71 a round to about $27** — you gave up $44 a round of rent to save $8 a round of carrying cost. Mortgage one of two utilities and the other falls from 10× the dice to 4×.
 
 ### Building
 
 You may build only on a colour group you own **entirely and unmortgaged**, and you must build **evenly** — no property in the group may be more than one house ahead of another. Five houses is a hotel.
 
-**Buildings sell back to the bank at 50% of their purchase cost**, and selling back follows the same even-build rule as building up.
+**Houses and hotels cost 90% of the standard Monopoly price.** Ignore the numbers printed on the physical deed cards; section 8 has the real ones. A hotel costs five times the house price.
 
-House supply is capped at **32 houses and 12 hotels for the whole table**. Buying up the houses so nobody else can build is a legitimate strategy and the app will let you do it.
+**Buildings sell back to the bank at 50% of the price you paid**, and selling back follows the same even-build rule as building up.
+
+Buildings are scored at their **full purchase price** in your final net worth, and they also earn rent, so building converts cash into an asset marked at par that pays you. House supply is capped at **32 houses and 12 hotels for the whole table**, and buying up the supply so nobody else can build is a legitimate strategy the app will let you use.
 
 ### Mortgaging
 
-Mortgage a deed for **50% of face value**. Unmortgage it for **55%**. A mortgaged property collects no rent, contributes nothing to your borrowing base, and stops costing you its $8.
+Mortgage a deed for **50% of face value**. Unmortgage it for **55%**. A mortgaged property collects no rent, contributes nothing to your borrowing base, counts as unowned for group and railroad tests, pays no venture bonus, and stops costing you its $8.
 
-**You cannot mortgage a property that has buildings on it.** Sell the buildings back first — and because sell-back is even across the group, mortgaging one property in a developed colour group means stripping the whole group. This is the most expensive mistake available in Era I. Read the app's warning before you confirm.
+**You cannot mortgage a property that has buildings on it.** Sell the buildings back first — and because sell-back is even across the group, mortgaging one property in a developed colour group means stripping the whole group.
 
 ### Trading
 
@@ -212,27 +233,29 @@ BORROWING BASE = 75% of your unmortgaged deed face value
                + 50% of your building cost
 ```
 
-Interest is charged every Settlement on your **drawn balance** at the era rate — 5% this era — and paid to the Treasury. If you cannot pay it from clean cash, the interest **capitalises into the drawn balance** and starts earning interest itself.
+Interest is charged every Settlement on your **drawn balance** at the era rate — 5% this era — and paid to the Treasury. Unpaid interest capitalises into the balance, like every other obligation, and starts earning interest itself.
 
-Those ratios are generous on purpose. At a lower base the whole table could not borrow enough to matter, and a player absorbing one bad landing had no option but to mortgage into a spiral. You are expected to use this line. Almost everyone does.
+**Voluntary draws are capped at your borrowing base.** You cannot choose to borrow past it. Only obligations push you through.
 
 ### Margin calls
 
-If your drawn balance exceeds your borrowing base at Settlement step 10 — usually because you mortgaged, sold or lost a deed, or because interest capitalised — the position is flagged.
+If your drawn balance exceeds your borrowing base at Settlement step 10, the position is flagged. **You have until the end of the next Open phase to cure it**, by repaying cash or by raising your base.
 
-**You have until the end of the next Open phase to cure it**, by repaying cash or by raising your base.
+If you do not cure it, you are marked for liquidation, which happens **at the start of the following Open phase** as a facilitator-run auction, not silently during Settlement.
 
-If you do not cure it, you are marked for liquidation, which happens **at the start of the following Open phase** as a facilitator-run auction, not silently during Settlement. Your deeds are offered to the other three players in descending face-value order. Each goes to the highest bid **at or above 70% of face value**; if nobody bids, the bank takes it at exactly 70%. The deed leaves play — it is not re-drafted. Proceeds pay down your drawn balance until the position is cured.
+1. **Developed deeds are stripped first.** Buildings across the colour group are sold back at 50% of cost following even-build, and the cash goes against your debt before the deed is auctioned. Buildings advance 50% of cost into your base and return 50% of cost in cash, so **stripping is exactly shortfall-neutral** — it costs you all your rent and moves your margin position not at all.
+2. Deeds are then offered to the other three players in **descending face-value order**. Each goes to the highest bid **at or above 80% of face value**; if nobody bids, the bank takes it at exactly 80%. The deed leaves play and is not re-drafted.
+3. **Liquidation stops when the position is cured, or when you have no unmortgaged deeds left.** Any residual shortfall becomes distressed debt.
 
-> **Do the arithmetic before you let this happen.** A deed sold at the 70% floor raises 70% of its face but removes 75% of its face from your borrowing base. At the floor, **every forced sale leaves you slightly further short than you were.** Liquidation only converges if buyers bid above 75% of face. Selling the deed yourself, in the Open phase, at a price you negotiated, is not merely better — it is a different outcome.
+> **Know the exchange rate before you rely on this.** A forced sale raises 80% of face and removes 75% of face from your base, so **each sale narrows your shortfall by 5% of that deed's face value** — $10 on a $200 railroad. The auction converges, but slowly. The most it can ever recover is **5% of your total unmortgaged deed face**; with $1,360 of deeds that is $68. A breach larger than that consumes your whole portfolio and still leaves distressed debt behind. Cure small, cure early.
 
-### If you cannot pay
+### Distressed debt
 
-Nobody is eliminated, ever.
+Distressed debt means one specific thing: **a margin call went uncured, the liquidation ran, and it stopped because you had nothing left to sell.** It is not a bucket for unpaid bills — unpaid bills capitalise into your credit line and nothing more.
 
-**Liquidation applies only to uncured margin calls.** Any other shortfall you cannot meet — an unpayable rent bill, a tax, a carrying cost, an audit fine — becomes **Distressed Debt** immediately, with no liquidation and no auction. This is what keeps a broke player playing instead of stalling the table for ten minutes.
+It accrues at **15% per round, compounding**, and is subtracted from your net worth at scoring. It is **repayable at any time in any Open phase**, and the app will never sweep it out of your cash for you.
 
-Distressed debt accrues at **15% per round, compounding**, and is subtracted from your net worth at scoring. It is **repayable at any time in any Open phase**, and the app will never sweep it out of your cash for you — paying it down is always your decision, and the compounding is the pressure. See worked example 5.
+You are still not eliminated. You keep acting in every phase. You carry a wound that compounds.
 
 ### Fixed board payments
 
@@ -252,13 +275,13 @@ Distressed debt accrues at **15% per round, compounding**, and is subtracted fro
 
 **What's new:** peer loans, rent futures, ventures, laundering and bribery. At the start of round 7 the Treasury advances every player **$300 — as an interest-bearing loan, not a gift.**
 
-**Prevailing rate: 6% per round.** Your credit line, borrowing base (75% of unmortgaged deed face + 50% of building cost), margin calls, building, mortgaging, trading, rent and the **$8-per-unmortgaged-deed carrying cost** all work exactly as in Era I; only the rate has moved.
+**Prevailing rate: 6% per round.** Your credit line, borrowing base (75% of unmortgaged deed face + 50% of building cost), the obligation waterfall, margin calls, building at 90% of standard cost, mortgaging, trading, rent and the **$8-per-unmortgaged-deed carrying cost** all work exactly as in Era I; only the rate has moved.
 
 Card draws come from the **Era II deck**. Still no movement cards.
 
 ### The stimulus is a loan
 
-The $300 is **added to your drawn credit balance** and accrues at the prevailing era rate like any other borrowing. It raises your cash, it raises your debt, and it eats $300 of your headroom against your borrowing base. If you were already close to your base, taking delivery of the stimulus can flag you. Check your gauge in round 7.
+The $300 is **added to your drawn credit balance** and accrues at the prevailing era rate like any other borrowing. It raises your cash, it raises your debt, and it eats $300 of your headroom. If you were already close to your base, taking delivery of the stimulus can flag you. Check your gauge in round 7.
 
 ### Rent futures
 
@@ -276,15 +299,15 @@ The centrepiece. A contract that transfers **all rent collected on one specified
 
 **Who pays and who receives.** Rent is owed by whichever player lands on the deed, **except its owner, who never owes anything**. It is received by the futures holder if a contract is active, otherwise by the owner. If the futures holder lands on the deed and is not its owner, they would owe rent to themselves: **no payment occurs.**
 
-**Contracts follow the deed.** Sell or trade an encumbered property and the new owner inherits the obligation. The app shows the encumbrance so both sides can price it.
+**Contracts follow the deed** through a sale or trade, and the app shows the encumbrance so both sides can price it. **Mortgaging triggers make-whole**: you may mortgage an encumbered property, but you immediately owe the holder the contract's remaining expected value and the contract terminates.
 
-**Mortgaging triggers make-whole.** You may mortgage an encumbered property, but you immediately owe the holder the contract's remaining expected value as computed by the app, and the contract terminates. This closes the obvious escape route.
+**A forced liquidation extinguishes the contract.** The holder receives the same make-whole payment, and that amount is **added to the liquidated player's shortfall**. So encumbering your deeds does not shelter them from the bank and does not soften a liquidation — it makes your liquidation more expensive.
 
 **What the app shows you** for any property, free, to everyone: landing probability, expected hits over the window, current rent at present development, expected value, and the 10th and 90th percentiles of the outcome.
 
-**How expected hits are computed**, so you can sanity-check a price in your head: take the per-roll landing probability, multiply by **3** for the three players who can owe you rent, and by **1.19** for the extra rolls doubles generate. That is **3.57 × the landing probability per round**, or **28.56 ×** over a full 8-round window. The app does this for you and shows the result.
+**How expected hits are computed**, so you can sanity-check a price in your head: take the per-roll landing probability, multiply by **3** for the three players who can owe you rent, and by **1.19** for the extra rolls doubles generate. That is **3.57 × the landing probability per round**, or **28.56 ×** over a full 8-round window. Jail never takes a player out of the count, so the 3 always holds.
 
-**Why the market is skillful.** The model prices the property **as it is right now**. You price it as it will be. With board traffic as flat as it is here, almost all of a contract's value comes from what is *built* on the property — so a rent future is mostly a bet on development. Selling one on a property you are about to hotel, or buying one from a player whose carrying costs are about to force them to strip a group, are both edges the displayed number cannot see. See worked example 1.
+**Why the market is skillful.** The model prices the property **as it is right now**. You price it as it will be. With board traffic as flat as it is here, almost all of a contract's value comes from what is *built* on the property — so a rent future is mostly a bet on development. See worked example 1.
 
 ### Peer loans
 
@@ -300,15 +323,25 @@ A peer loan does not touch your borrowing base, which makes it the cleanest way 
 2. Any remaining balance is written off.
 3. The borrower's **credit line borrowing base is permanently halved** for the rest of the game.
 
-That third clause is the real cost. Read it before you pledge.
+The halving happens **once**. A second default costs you the collateral and the write-off but does not halve you again.
 
-### Ventures
+### The underworld
 
 Vice. All income is paid in **dirty cash**, and all of it costs Heat.
 
+> ### Read this before you launch anything
+>
+> **Ventures cost clean cash and pay dirty cash.** Dirty cash is worth **exactly $0** at scoring. The only way to turn it into score is to launder it, and laundering costs you at least 25%.
+>
+> **So a venture must return more than 133% of its cost just to break even**, before you count a single point of Heat. A $150 venture paying out $180 dirty has lost you money.
+>
+> Every payout figure below is quoted in **clean, post-laundering dollars**, which is the only figure that means anything. The app does the same. If you find yourself comparing a dirty number to a clean one you are about to make the most expensive mistake available in this game — the gap between playing the underworld correctly and playing it naively is worth about **$1,290** of net worth, the largest skill gap anywhere in the economy.
+>
+> **And you may simply not do any of this.** Playing the underworld perfectly beats abstaining by roughly 5% of net worth, which is less than one bad landing. Abstaining is a real strategy, not a forfeit.
+
 | Venture | Cost | Duration | Effect | Heat |
 |---|---|---|---|---|
-| Escort Service | $300 | 4 rounds | +40% of all rent charged on deeds you own, paid dirty | +2 |
+| Escort Service | $150 | 4 rounds | +60% of all rent charged on deeds you own, paid dirty | +2 |
 | Numbers Racket | $150 | 6 rounds | +$60 dirty per round, flat | +2 |
 | Chop Shop | $250 | 4 rounds | +$150 dirty each time any opponent lands on a deed you own | +3 |
 | Speakeasy | $250 | one-shot | Roll 2d6 on the payout table | +2 |
@@ -323,19 +356,17 @@ Speakeasy payouts:
 | 9–11 | $500 | 25.0% |
 | 12 | $1,200 | 2.8% |
 
-Expected payout is $294 dirty against a $250 cost. It is a gamble, not an income stream.
+Expected payout is $294 dirty against a $250 cost — about **$221 clean**. It is a gamble, and a losing one.
 
-**Ventures pay the deed's owner, on rent *charged*, not rent received.** Escort Service and Chop Shop calculate on what your deeds bill, regardless of who actually collects it. Selling a rent future therefore does not extinguish your venture income — and a futures holder running their own Escort Service earns nothing from deeds they do not own. Ventures attach to property, not to cashflow claims.
+**Ventures pay the deed's owner, on rent *charged*, not rent received.** Escort Service and Chop Shop calculate on what your deeds bill, regardless of who collects it — so selling a rent future does not extinguish your venture income, and a futures holder running Escort Service earns nothing from deeds they do not own.
 
-Escort Service and Chop Shop reward opposite board positions on purpose. Escort pays a percentage of rent, so it wants hotels. Chop Shop pays a flat fee per landing regardless of rent, so it wants many deeds of any kind.
+**A mortgaged deed charges no rent, so it pays no venture bonus at all**, on either instrument.
 
-### Dirty cash
+### Dirty cash and laundering
 
 Dirty cash is worth **exactly $0 at final scoring** and is **entirely seizable in an audit**. You may spend it on only four things: ventures, bribery, insider trading, and laundering.
 
-**Laundering** converts dirty to clean at a **25% haircut**, worsening by **5 percentage points for every Heat point above 3**, capped at a 60% haircut. Each laundering transaction costs **+1 Heat**, and you may launder **at most once per Open phase**.
-
-**The haircut is computed from your Heat *before* that transaction's +1 is applied.** At Heat 3 you pay 25%, not 30%.
+**Laundering** converts dirty to clean at a **25% haircut**, worsening by **5 percentage points for every Heat point above 3**, capped at a 60% haircut. Each transaction costs **+1 Heat**, and you may launder **at most once per Open phase**. The haircut is read from your Heat **before** that transaction's +1 — at Heat 3 you pay 25%, not 30%.
 
 | Your Heat when you launder | Haircut | $400 dirty becomes |
 |---|---|---|
@@ -359,9 +390,9 @@ Dirty cash is worth **exactly $0 at final scoring** and is **entirely seizable i
 | Insider trading | +1 |
 | A round in which you take no *deliberate* dirty action | −1 |
 
-**Automatic payouts from a venture already running do not block decay.** Launching is a deliberate action; collecting is not. A venture you started in round 8 is cooling you down at −1 a round from round 9 onward *while it pays you*. Without this rule a six-round Numbers Racket would make cooling off impossible before the audits start.
+**Automatic payouts from a venture already running do not block decay.** Launching is deliberate; collecting is not. A venture you started in round 8 is cooling you down at −1 a round from round 9 onward *while it pays you*.
 
-**Nothing happens to your Heat in Era II.** Audit checks do not begin until round 13. This is a six-round window in which vice appears to be free money — and given the decay rule, a player who launches early and launders once can genuinely be back at Heat 0 or 1 by round 13. Heat is only expensive if you keep acting.
+**Nothing happens to your Heat in Era II.** Audit checks do not begin until round 13, and given the decay rule a player who launches early and launders once can genuinely be back at Heat 0 by then. Heat is only expensive if you keep acting.
 
 ### Bribery
 
@@ -373,7 +404,7 @@ Dirty cash is worth **exactly $0 at final scoring** and is **entirely seizable i
 
 It cannot cancel a card that targets all players, and it cannot be used during Settlement once an audit has already resolved.
 
-Bribery is the reason dirty cash is not purely a liability. It gives the underworld its own internal currency.
+Bribery is the reason dirty cash is not purely a liability. It is the one thing you cannot buy with clean money.
 
 ---
 
@@ -381,7 +412,7 @@ Bribery is the reason dirty cash is not purely a liability. It gives the underwo
 
 **What's new:** CDO pools and tranches, credit default swaps, deed options, insider trading — and **audit checks begin**.
 
-**Prevailing rate: 8% per round.** Everything from Eras I and II continues unchanged: rent, building, mortgages, trading, the **$8-per-unmortgaged-deed carrying cost**, the credit line at 75%/50% and its margin calls, peer loans, rent futures, ventures, dirty cash, laundering and bribery. Card draws come from the **Era III deck**. Still no movement cards.
+**Prevailing rate: 8% per round.** Everything from Eras I and II continues unchanged: rent, building at 90% of standard cost, mortgages, trading, the **$8-per-unmortgaged-deed carrying cost**, the obligation waterfall, the credit line at 75%/50% and its margin calls, peer loans, rent futures, ventures, dirty cash, laundering and bribery. Card draws come from the **Era III deck**. Still no movement cards.
 
 ### Audits
 
@@ -398,7 +429,7 @@ Bribery is the reason dirty cash is not purely a liability. It gives the underwo
 
 **On an audit:** all your dirty cash is seized, you pay a fine of **$100 × your Heat in clean cash**, and your **Heat resets to 0**.
 
-The fine lands at step 9 and margin calls are flagged at step 10, so **an audit fine can margin-call you in the same Settlement.** If you cannot pay the fine at all it becomes distressed debt on the spot — fines are not a margin event and do not themselves trigger liquidation.
+The fine goes through the ordinary obligation waterfall — if you cannot cover it in clean cash it capitalises into your credit line. Because that happens at step 9 and margin calls are flagged at step 10, **an audit fine can margin-call you in the same Settlement.**
 
 The worst position available is high Heat plus a large unlaundered pile. Launder early, then let the −1 per clean round drain you down.
 
@@ -410,11 +441,13 @@ $100 in clean **or** dirty cash. Reveals the top card of the current era deck **
 
 Three numbers: **premium**, **strike**, **expiry round**.
 
-The deed's owner writes the option and receives the premium. The holder may exercise in **any Open phase up to and including the expiry round**, paying the strike and receiving the deed. Options may be resold by the holder. Options reaching expiry lapse at Settlement step 11.
+The deed's owner writes the option and receives the premium. The holder may exercise in **any Open phase up to and including the expiry round**, paying the strike and receiving the deed. Options may be resold. Options reaching expiry lapse at Settlement step 11.
 
 While an option is outstanding, the writer **may not sell, trade or mortgage** the underlying deed.
 
-Deed options exist because monopolies are rare here. If you need one specific deed to complete a group and the owner will not sell today, buy the right to make him sell later.
+**A forced liquidation cancels the option** and refunds the holder's premium, with that refund added to the liquidated player's shortfall. Options lock a deed against voluntary disposal, not against the bank. This closes two exploits at once: you cannot write $1 options across your portfolio to make yourself judgment-proof, and you cannot write a $1-strike option to a friend, get liquidated at the 80% floor, and have them exercise for a dollar.
+
+Deed options exist because monopolies are rare here. If you need one specific deed and the owner will not sell today, buy the right to make him sell later.
 
 ### Securitization: pools and tranches
 
@@ -432,7 +465,7 @@ Senior and Mezzanine faces are set at creation and **together cannot exceed the 
 
 **The waterfall.** Every Settlement at step 6, all cash the pool's underlying assets collected is distributed in strict priority: Senior up to its remaining face, then Mezzanine up to its remaining face, then Equity takes whatever is left. The pool terminates when all underlying assets have matured or defaulted — or at the end of round 24, whichever comes first.
 
-**When a pooled loan defaults**, its collateral deeds do not go to anyone as deeds. They are sold to the bank at the standard **70% of face**, and that cash enters the pool's collected cash for the same round's waterfall. A waterfall can only distribute money, so the deeds are converted into money.
+**When a pooled loan defaults**, its collateral deeds do not go to anyone as deeds. They are sold to the bank at the standard liquidation floor of **80% of face**, and that cash enters the pool's collected cash for the same round's waterfall. A waterfall can only distribute money, so the deeds are converted into money.
 
 ### Ratings
 
@@ -461,7 +494,7 @@ score = coverage x (1 - 0.25 x concentration) / (1 + 0.10 x leverage)
 
 The formula is coverage-dominant and forgiving of concentration. A pool of three loans all made to the same player at 3.8× leverage still rates its senior slice **AA**. That rating is arithmetically correct and analytically worthless. It is both the joke and a genuine strategy.
 
-Alongside the letter, the app **always** displays obligor concentration and weighted borrower leverage as raw numbers. The information is there for anyone who reads it. Read it. See worked example 2.
+Alongside the letter, the app **always** displays obligor concentration and weighted borrower leverage as raw numbers. Read them. See worked example 2.
 
 ### Credit default swaps
 
@@ -489,11 +522,11 @@ Because tranche CDS settle at termination, and because **every pool terminates a
 
 **Prevailing rate: 12% per round.** That is the entire mechanic. Everything you can do, you could already do; it now costs more than twice what it cost in Era I.
 
-Everything continues: rent, building, mortgages, trading, the $8-per-unmortgaged-deed carrying cost, credit lines, margin calls, peer loans, rent futures, ventures, dirty cash, laundering, bribery, audits every Settlement, deed options, CDOs, waterfalls, ratings and CDS. Card draws come from the **Reckoning deck**, which issues downgrades, sweeps and covenant breaches, and reads live game state — a card can name the most leveraged player or the player holding the most dirty cash. Still no movement cards.
+Everything continues: rent, building, mortgages, trading, the $8-per-unmortgaged-deed carrying cost, the obligation waterfall, credit lines, margin calls, peer loans, rent futures, ventures, dirty cash, laundering, bribery, audits every Settlement, deed options, CDOs, waterfalls, ratings and CDS. Card draws come from the **Reckoning deck**, which issues downgrades, sweeps and covenant breaches, and reads live game state — a card can name the most leveraged player or the player holding the most dirty cash. Still no movement cards.
 
 ### What 12% actually does
 
-A drawn balance of $1,000 costs you $120 every Settlement, on top of $56 a round in carrying cost if you hold seven deeds. If you cannot pay from clean cash the interest capitalises, so round 20's balance is $1,120, round 21's is $1,254, and by round 24 it is $1,574 against a borrowing base that has not moved. **Interest alone will margin-call you.** Check your headroom in the Market phase of round 19 and decide then whether you are deleveraging or committing.
+A drawn balance of $1,000 costs you $120 every Settlement, on top of $56 a round in carrying cost if you hold seven deeds. If you cannot pay from clean cash it capitalises, so round 20's balance is $1,120, round 21's is $1,254, and by round 24 it is $1,574 against a borrowing base that has not moved. **Interest alone will margin-call you.** Check your headroom in the Market phase of round 19 and decide then whether you are deleveraging or committing.
 
 The money supply contracts by roughly 29% across the game, and the squeeze is worst here by design: liquidity gets tighter at exactly the point the rate curve peaks. Cash you are holding in round 19 is worth more than cash you held in round 5.
 
@@ -530,6 +563,8 @@ NET WORTH =   clean cash
 | CDS bought, untriggered | Zero |
 | CDS written, untriggered | Zero — the 30% collateral reduces your borrowing base, not your net worth |
 
+Buildings score at the **full price you paid**, which is 90% of standard.
+
 `borrowerLeverage` is that borrower's drawn credit balance divided by their borrowing base. A note against an unlevered player marks at par; a note against a player at 4× or worse marks at 40% of principal. Lending to a wreck destroys the value of your own asset.
 
 **You win by having the highest net worth after round 24.** If the facilitator set a net-worth target at setup instead, the first player to reach it wins, and the app displays everyone's progress toward it.
@@ -561,50 +596,51 @@ NET WORTH =   clean cash
 | Draft round you cannot afford | Cheapest remaining deed, free |
 | Mortgage a deed | you receive 50% of face |
 | Unmortgage a deed | you pay 55% of face |
-| Sell a building back | you receive 50% of its cost |
-| Forced liquidation floor | 70% of face |
+| Houses and hotels | **90% of standard price** (table below) |
+| Sell a building back | you receive 50% of the price you paid |
+| **Forced liquidation floor** | **80% of face** |
 | Distressed debt | 15% per round, compounding |
 | Borrowing base | 75% of unmortgaged deed face + 50% of building cost |
 | CDS collateral posted by the seller | 30% of notional, against borrowing base |
 
 ### Properties: price, rent, and traffic
 
-Rent shown is the base. **Double the base rent if you own the full colour group and none of it is developed.** Landing % is the exact steady-state probability that a single roll ends on that square, **on this board** — these are not the standard Monopoly figures and the standard figures are wrong here.
+Rent shown is the base. **If you own the whole colour group, double the base rent on each deed in it that has no houses.** House prices are **90% of standard**; a hotel costs five times the house price. Landing % is the exact steady-state probability that a single roll ends on that square **on this board** — the standard Monopoly figures are wrong here.
 
-| Sq | Property | Group | Price | Mtg | House | Rent | 1H | 2H | 3H | 4H | Hotel | Landing % |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | Mediterranean Ave | Brown | $60 | $30 | $50 | $2 | $10 | $30 | $90 | $160 | $250 | 2.2911% |
-| 3 | Baltic Ave | Brown | $60 | $30 | $50 | $4 | $20 | $60 | $180 | $320 | $450 | 2.3339% |
-| 6 | Oriental Ave | Light Blue | $100 | $50 | $50 | $6 | $30 | $90 | $270 | $400 | $550 | 2.2691% |
-| 8 | Vermont Ave | Light Blue | $100 | $50 | $50 | $6 | $30 | $90 | $270 | $400 | $550 | 2.2735% |
-| 9 | Connecticut Ave | Light Blue | $120 | $60 | $50 | $8 | $40 | $100 | $300 | $450 | $600 | 2.2774% |
-| 11 | St. Charles Place | Pink | $140 | $70 | $100 | $10 | $50 | $150 | $450 | $625 | $750 | 2.2809% |
-| 13 | States Ave | Pink | $140 | $70 | $100 | $10 | $50 | $150 | $450 | $625 | $750 | 2.4431% |
-| 14 | Virginia Ave | Pink | $160 | $80 | $100 | $12 | $60 | $180 | $500 | $700 | $900 | 2.5282% |
-| 16 | St. James Place | Orange | $180 | $90 | $100 | $14 | $70 | $200 | $550 | $750 | $950 | 2.7146% |
-| 18 | Tennessee Ave | Orange | $180 | $90 | $100 | $14 | $70 | $200 | $550 | $750 | $950 | **2.7743%** |
-| 19 | New York Ave | Orange | $200 | $100 | $100 | $16 | $80 | $220 | $600 | $800 | $1,000 | 2.7405% |
-| 21 | Kentucky Ave | Red | $220 | $110 | $150 | $18 | $90 | $250 | $700 | $875 | $1,050 | 2.6943% |
-| 23 | Indiana Ave | Red | $220 | $110 | $150 | $18 | $90 | $250 | $700 | $875 | $1,050 | 2.6404% |
-| 24 | Illinois Ave | Red | $240 | $120 | $150 | $20 | $100 | $300 | $750 | $925 | $1,100 | 2.6803% |
-| 26 | Atlantic Ave | Yellow | $260 | $130 | $150 | $22 | $110 | $330 | $800 | $975 | $1,150 | 2.7073% |
-| 27 | Ventnor Ave | Yellow | $260 | $130 | $150 | $22 | $110 | $330 | $800 | $975 | $1,150 | 2.7060% |
-| 29 | Marvin Gardens | Yellow | $280 | $140 | $150 | $24 | $120 | $360 | $850 | $1,025 | $1,200 | 2.6880% |
-| 31 | Pacific Ave | Green | $300 | $150 | $200 | $26 | $130 | $390 | $900 | $1,100 | $1,275 | 2.6783% |
-| 32 | North Carolina Ave | Green | $300 | $150 | $200 | $26 | $130 | $390 | $900 | $1,100 | $1,275 | 2.6051% |
-| 34 | Pennsylvania Ave | Green | $320 | $160 | $200 | $28 | $150 | $450 | $1,000 | $1,200 | $1,400 | 2.4567% |
-| 37 | Park Place | Dark Blue | $350 | $175 | $200 | $35 | $175 | $500 | $1,100 | $1,300 | $1,500 | **2.1887%** |
-| 39 | Boardwalk | Dark Blue | $400 | $200 | $200 | $50 | $200 | $600 | $1,400 | $1,700 | $2,000 | 2.2553% |
-| 5 | Reading Railroad | Railroad | $200 | $100 | — | see below | | | | | | 2.2749% |
-| 15 | Pennsylvania RR | Railroad | $200 | $100 | — | see below | | | | | | 2.6163% |
-| 25 | B&O Railroad | Railroad | $200 | $100 | — | see below | | | | | | 2.7020% |
-| 35 | Short Line | Railroad | $200 | $100 | — | see below | | | | | | 2.3752% |
-| 12 | Electric Company | Utility | $150 | $75 | — | see below | | | | | | 2.3639% |
-| 28 | Water Works | Utility | $150 | $75 | — | see below | | | | | | 2.6963% |
+| Sq | Property | Group | Price | Mtg | House | Hotel | Rent | 1H | 2H | 3H | 4H | Htl rent | Landing % |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Mediterranean Ave | Brown | $60 | $30 | **$45** | $225 | $2 | $10 | $30 | $90 | $160 | $250 | 2.2911% |
+| 3 | Baltic Ave | Brown | $60 | $30 | **$45** | $225 | $4 | $20 | $60 | $180 | $320 | $450 | 2.3339% |
+| 6 | Oriental Ave | Light Blue | $100 | $50 | **$45** | $225 | $6 | $30 | $90 | $270 | $400 | $550 | 2.2691% |
+| 8 | Vermont Ave | Light Blue | $100 | $50 | **$45** | $225 | $6 | $30 | $90 | $270 | $400 | $550 | 2.2735% |
+| 9 | Connecticut Ave | Light Blue | $120 | $60 | **$45** | $225 | $8 | $40 | $100 | $300 | $450 | $600 | 2.2774% |
+| 11 | St. Charles Place | Pink | $140 | $70 | **$90** | $450 | $10 | $50 | $150 | $450 | $625 | $750 | 2.2809% |
+| 13 | States Ave | Pink | $140 | $70 | **$90** | $450 | $10 | $50 | $150 | $450 | $625 | $750 | 2.4431% |
+| 14 | Virginia Ave | Pink | $160 | $80 | **$90** | $450 | $12 | $60 | $180 | $500 | $700 | $900 | 2.5282% |
+| 16 | St. James Place | Orange | $180 | $90 | **$90** | $450 | $14 | $70 | $200 | $550 | $750 | $950 | 2.7146% |
+| 18 | Tennessee Ave | Orange | $180 | $90 | **$90** | $450 | $14 | $70 | $200 | $550 | $750 | $950 | **2.7743%** |
+| 19 | New York Ave | Orange | $200 | $100 | **$90** | $450 | $16 | $80 | $220 | $600 | $800 | $1,000 | 2.7405% |
+| 21 | Kentucky Ave | Red | $220 | $110 | **$135** | $675 | $18 | $90 | $250 | $700 | $875 | $1,050 | 2.6943% |
+| 23 | Indiana Ave | Red | $220 | $110 | **$135** | $675 | $18 | $90 | $250 | $700 | $875 | $1,050 | 2.6404% |
+| 24 | Illinois Ave | Red | $240 | $120 | **$135** | $675 | $20 | $100 | $300 | $750 | $925 | $1,100 | 2.6803% |
+| 26 | Atlantic Ave | Yellow | $260 | $130 | **$135** | $675 | $22 | $110 | $330 | $800 | $975 | $1,150 | 2.7073% |
+| 27 | Ventnor Ave | Yellow | $260 | $130 | **$135** | $675 | $22 | $110 | $330 | $800 | $975 | $1,150 | 2.7060% |
+| 29 | Marvin Gardens | Yellow | $280 | $140 | **$135** | $675 | $24 | $120 | $360 | $850 | $1,025 | $1,200 | 2.6880% |
+| 31 | Pacific Ave | Green | $300 | $150 | **$180** | $900 | $26 | $130 | $390 | $900 | $1,100 | $1,275 | 2.6783% |
+| 32 | North Carolina Ave | Green | $300 | $150 | **$180** | $900 | $26 | $130 | $390 | $900 | $1,100 | $1,275 | 2.6051% |
+| 34 | Pennsylvania Ave | Green | $320 | $160 | **$180** | $900 | $28 | $150 | $450 | $1,000 | $1,200 | $1,400 | 2.4567% |
+| 37 | Park Place | Dark Blue | $350 | $175 | **$180** | $900 | $35 | $175 | $500 | $1,100 | $1,300 | $1,500 | **2.1887%** |
+| 39 | Boardwalk | Dark Blue | $400 | $200 | **$180** | $900 | $50 | $200 | $600 | $1,400 | $1,700 | $2,000 | 2.2553% |
+| 5 | Reading Railroad | Railroad | $200 | $100 | — | — | see below | | | | | | 2.2749% |
+| 15 | Pennsylvania RR | Railroad | $200 | $100 | — | — | see below | | | | | | 2.6163% |
+| 25 | B&O Railroad | Railroad | $200 | $100 | — | — | see below | | | | | | 2.7020% |
+| 35 | Short Line | Railroad | $200 | $100 | — | — | see below | | | | | | 2.3752% |
+| 12 | Electric Company | Utility | $150 | $75 | — | — | see below | | | | | | 2.3639% |
+| 28 | Water Works | Utility | $150 | $75 | — | — | see below | | | | | | 2.6963% |
 
-**Railroads** — rent by number owned: **1 → $25, 2 → $50, 3 → $100, 4 → $200.**
+**Railroads** — rent by number owned: **1 → $25, 2 → $50, 3 → $100, 4 → $200.** Mortgaged railroads do not count toward the total.
 
-**Utilities** — **one owned: 4× the dice roll. Both owned: 10× the dice roll.** Average roll is 7, so one utility averages $28 and two average $70.
+**Utilities** — **one owned: 4× the dice roll. Both owned: 10× the dice roll.** Average roll is 7, so one utility averages $28 and two average $70. A mortgaged utility does not count.
 
 Total face value of all 28 deeds: **$5,690**. Total carrying cost across the table if nothing is mortgaged: **$224 per round**.
 
@@ -658,16 +694,31 @@ The six card squares take **14.89% of all rolls between them**, so expect a draw
 
 Park Place is the quietest square on the board for the mirror-image reason: it sits seven past Go To Jail, which is never a resting square and therefore feeds nobody.
 
-### Ventures
+### The underworld
+
+All net figures are **clean, post-laundering**, at the base 25% haircut. A venture must return **more than 133% of its cost in dirty cash** merely to break even.
 
 | Venture | Cost | Duration | Effect | Heat |
 |---|---|---|---|---|
-| Escort Service | $300 | 4 rounds | +40% of all rent charged on deeds you own, dirty | +2 |
+| Escort Service | $150 | 4 rounds | +60% of rent charged on deeds you own, dirty | +2 |
 | Numbers Racket | $150 | 6 rounds | +$60 dirty per round | +2 |
 | Chop Shop | $250 | 4 rounds | +$150 dirty per opponent landing on any deed you own | +3 |
 | Speakeasy | $250 | one-shot | 2d6 on the table below, dirty | +2 |
 | Bribery | $200 **dirty only** | instant | Re-roll any one die roll / cancel a card targeting you / delay one of your margin calls a round | +1 |
 | Insider trading | $100 clean or dirty | instant | See the top card of the current era deck | +1 |
+
+**Escort Service versus Numbers Racket, the only comparison that matters:**
+
+| Your rent charged per round | Escort Service, net clean | Numbers Racket, net clean |
+|---|---|---|
+| $50 | −$60 | +$120 |
+| $85 | break even | +$120 |
+| $100 | +$30 | +$120 |
+| **$150** | **+$120 — the crossover** | **+$120** |
+| $250 | +$300 | +$120 |
+| $355 | +$489 | +$120 |
+
+**Escort Service is worth it above roughly $150 of rent charged per round, and a loss below about $85.** Numbers Racket does not care what you own. **Chop Shop cannot beat Numbers Racket from any position reachable in this game** — even the seven highest-traffic deeds on the board return only about +$56.
 
 ### Speakeasy payouts
 
@@ -678,7 +729,7 @@ Park Place is the quietest square on the board for the mirror-image reason: it s
 | 6–8 | $250 | 44.4% | $111.11 |
 | 9–11 | $500 | 25.0% | $125.00 |
 | 12 | $1,200 | 2.8% | $33.33 |
-| | | | **$294.44 dirty** |
+| | | | **$294.44 dirty = $221 clean** |
 
 ### Heat, laundering and audits
 
@@ -735,7 +786,7 @@ Read across the bottom row: the worst possible pool in the game still only knock
 
 ## 9. Worked examples
 
-Throughout, expected hits use the app's own conversion: **landing probability × 3 × 1.19 per round.** The 3 is the three players who can owe you rent — never the owner. The 1.19 is the extra rolls doubles generate. So one round is **3.57 ×** the landing probability, and a full 8-round window is **28.56 ×**.
+Throughout, expected hits use the app's own conversion: **landing probability × 3 × 1.19 per round.** The 3 is the three players who can owe you rent — never the owner, and never fewer, since Jail does not take anyone off the board. The 1.19 is the extra rolls doubles generate. One round is **3.57 ×** the landing probability; a full 8-round window is **28.56 ×**.
 
 ### Example 1 — Pricing a rent future
 
@@ -763,9 +814,11 @@ Chance of two or more                                            14%
 
 Compare New York Avenue, hoteled at $1,000 rent and 2.7405% traffic, over the same window: expected hits 0.78, expected value **$783**, chance of zero **45%**. Boardwalk is worth more, but only 1.6× more despite twice the rent — because it is landed on 18% less often. Boardwalk draws 2.2553%, which is less often than **Mediterranean Avenue**.
 
-**How to use this.** As the seller you want the buyer anchored on "it's Boardwalk." As the buyer, pay meaningfully under $1,288 for a contract with a 52% chance of paying nothing, unless variance is what you are shopping for. And check the encumbrance rules before you buy: if the owner mortgages Boardwalk mid-window, you are owed the contract's remaining expected value immediately, so a mortgage is not the rug-pull it looks like.
+**How to use this.** As the seller you want the buyer anchored on "it's Boardwalk." As the buyer, pay meaningfully under $1,288 for a contract with a 52% chance of paying nothing, unless variance is what you are shopping for.
 
-**The edge the model cannot see.** The app prices Boardwalk *as it is now*. Traffic on this board varies by only 1.27× from busiest square to quietest, so nearly the entire spread between a worthless contract and a valuable one is **what is built on the property**. If you are the owner and you sell this future for $1,100 while sitting on four houses, then hotel the property in round 16, you have sold at a four-house price. Nothing stops you. Equally, if you are the buyer and you know the owner is $56 a round underwater on carrying costs and about to strip that group in order to mortgage it, you should be paying far less than $1,288. A rent future is a bet on somebody's building plans.
+**Check what happens if the seller falls over.** If they mortgage Boardwalk mid-window you are owed the remaining expected value immediately, so a mortgage is not a rug-pull. If they are *liquidated*, the contract is extinguished and you receive the same make-whole. Either way you are paid — but you get expected value, not the hit you were hoping for, and the deed you were tracking leaves the game.
+
+**The edge the model cannot see.** The app prices Boardwalk *as it is now*. Traffic on this board varies by only 1.27× from busiest square to quietest, so nearly the entire spread between a worthless contract and a valuable one is **what is built on the property**. If you are the owner and you sell this future for $1,100 while sitting on four houses, then hotel the property in round 16, you have sold at a four-house price. Nothing stops you. Equally, if you are the buyer and you know the owner is $56 a round underwater on carrying costs and about to strip that group, you should be paying far less than $1,288. A rent future is a bet on somebody's building plans.
 
 ### Example 2 — Structuring and rating a CDO
 
@@ -815,18 +868,18 @@ Round 2   pool collects $118          ->  Senior.  Senior remaining face: $464
 Round 3   pool collects $118          ->  Senior.  Senior remaining face: $346
 Round 4   Dana defaults on all three notes at once.
           Note A's collateral (Vermont + Connecticut, $220 face) is sold to the
-          bank at 70% = $154, and that cash enters the pool.
-          pool collects $154          ->  Senior.  Senior remaining face: $192
+          bank at the 80% floor = $176, and that cash enters the pool.
+          pool collects $176          ->  Senior.  Senior remaining face: $170
           Remaining balances written off.
 
-FINAL     Senior received $508 of $700.   Mezzanine: $0.   Equity: $0.
+FINAL     Senior received $530 of $700.   Mezzanine: $0.   Equity: $0.
 ```
 
-Collateral never arrives as deeds. A waterfall can only distribute money, so the app converts the deeds at the standard 70% floor and pays the cash down the priority ladder like everything else.
+Collateral never arrives as deeds. A waterfall can only distribute money, so the app converts the deeds at the standard 80% floor and pays the cash down the priority ladder like everything else.
 
-At the end of round 24 the pool terminates with the Senior still $192 short of its face. **That is a credit event.** Any CDS written on this Senior tranche now pays its notional — capped at $700 — from seller to buyer. The seller had to post 30% of that notional, $210, against their borrowing base from the day they wrote it; that collateral does not cover the loss.
+At the end of round 24 the pool terminates with the Senior still $170 short of its face. **That is a credit event.** Any CDS written on this Senior tranche now pays its notional — capped at $700 — from seller to buyer. The seller had to post 30% of that notional, $210, against their borrowing base from the day they wrote it; that collateral does not cover the loss.
 
-Whoever bought your AA senior tranche for something near $620 has recovered $508. Whoever bought protection on it for $40 a Settlement has done rather better.
+Whoever bought your AA senior tranche for something near $620 has recovered $530. Whoever bought protection on it for $40 a Settlement has done rather better.
 
 ### Example 3 — Does a venture pay off?
 
@@ -842,21 +895,17 @@ Your expected rent charged per roll:
 | 4 railroads | $200 each | 9.9684% combined | $19.94 |
 | | | | **$99.49 per roll** |
 
-Multiply by the 3.57 rolls per round that can owe you rent: **$355 of rent charged per round.**
+Multiply by the 3.57 rolls per round that can owe you rent: **$355 of rent charged per round.** Every figure below is in **clean, laundered dollars**, because dirty dollars are worth nothing.
 
-**Escort Service — $300, 4 rounds, +40% of rent charged, +2 Heat**
+**Escort Service — $150, 4 rounds, +60% of rent charged, +2 Heat**
 
 ```
 Rent charged over 4 rounds      $355 x 4         = $1,421
-Escort pays 40%                                  =   $568 dirty
-Launder at Heat 0 (25% haircut)                  =   $426 clean
-Cost                                             =  -$300
-NET                                              =  +$126 clean
+Escort pays 60%                                  =   $853 dirty
+Launder at Heat 0 (25% haircut)                  =   $639 clean
+Cost                                             =  -$150
+NET                                              =  +$489 clean
 ```
-
-Note the Heat. You launch in round 9 for +2. Rounds 10, 11 and 12 involve no *deliberate* dirty action — the payouts are automatic and do not block decay — so you are back to **Heat 0** by the time you launder, and you take the base 25% haircut. Heat is only expensive if you keep acting.
-
-Note also that this is 40% of rent *charged*, not received. If you have sold rent futures on the oranges, you still collect the full Escort bonus. The venture attaches to the property, not to the cashflow.
 
 **Numbers Racket — $150, 6 rounds, $60/round, +2 Heat**
 
@@ -867,7 +916,7 @@ Cost                                             =  -$150
 NET                                              =  +$120 clean
 ```
 
-**Chop Shop — $250, 4 rounds, $150 per opponent landing on any deed you own, +3 Heat**
+**Chop Shop — $250, 4 rounds, $150 per opponent landing, +3 Heat**
 
 Riley's total traffic across all seven deeds is 8.2293% + 9.9684% = **18.20% per roll**.
 
@@ -879,114 +928,127 @@ Cost                                             =  -$250
 NET                                              =   +$42 clean
 ```
 
-**Speakeasy — $250 one-shot, +2 Heat**
+**Speakeasy — $250 one-shot, +2 Heat:** $294 dirty, $221 clean, against $250. **−$29 expected**, and 27.8% of the time you roll 5 or under and take $100 or nothing.
 
-```
-Expected payout    $294 dirty
-Laundered at 25%   $221 clean   against a $250 cost   ->  -$29 expected
-```
+**Reading the result.** Escort Service is enormous here — but Riley has the best rent position in the game, and the instrument scales directly with rent charged:
 
-And 27.8% of the time you roll 5 or under and take $100 or nothing.
+- Below about **$85 of rent per round**, Escort Service loses money outright.
+- At **$150 a round** it exactly matches Numbers Racket.
+- Above that it runs away, and at Riley's $355 it is four times better.
 
-**What this tells you.** Escort Service, run on the single best rent position in the game, nets **$126** over four rounds. Numbers Racket, available to a player who owns nothing at all, nets **$120** over six. The position-sensitive venture beats the position-blind one by six dollars at the very top of its range, and Chop Shop and Speakeasy do not meaningfully clear their cost.
+Numbers Racket is the floor: $120 clean for anybody, regardless of what they own, which makes it the correct choice for most players most of the time. **Chop Shop cannot beat it from any position reachable in this game** — even the seven busiest deeds on the board return about +$56.
 
-So do not launch a venture for the clean money. Launch it because **bribery can only be paid in dirty cash**, because dirty cash is invisible to every opponent reading your net worth, and because Heat decays for free while a venture runs. The usual correct play is to start something in Era II, launder once at low Heat, and be cold by round 13.
+**Note the Heat, because it is cheaper than it looks.** You launch in round 9 for +2. Rounds 10, 11 and 12 involve no *deliberate* dirty action — the payouts are automatic and do not block decay — so you are back to **Heat 0** by the time you launder, and you take the base 25% haircut. Heat is only expensive if you keep acting.
 
-*These four figures are being re-simulated and are the numbers in this rulebook most likely to move before the game is played.*
+**And keep the whole branch in proportion.** Playing all of this perfectly is worth roughly 5% of net worth over abstaining entirely — less than one unlucky landing on a hoteled orange. The reasons to bother are that **bribery can only be paid in dirty cash**, and that dirty cash is invisible to every opponent reading your net worth. If neither appeals, not touching the underworld is a genuine strategy rather than a forfeit.
 
 ### Example 4 — Reading a margin call
 
 Round 14, Era III, rate 8%. Riley from example 3 still holds the oranges and all four railroads.
 
-| Holding | Face value |
+| Holding | Value |
 |---|---|
-| St. James, Tennessee, New York (orange, hoteled) | $560 |
-| Four railroads | $800 |
+| St. James, Tennessee, New York (orange), face | $560 |
+| Four railroads, face | $800 |
 | **Total deed face** | **$1,360** |
-| Building cost: 3 hotels at $500 each | $1,500 |
+| 3 hotels at $450 each (house $90 × 5) | **$1,350** |
 
 ```
-BORROWING BASE = 75% x $1,360  +  50% x $1,500
-               =    $1,020     +      $750       =  $1,770
+BORROWING BASE = 75% x $1,360  +  50% x $1,350
+               =    $1,020     +      $675       =  $1,695
 
-DRAWN                                               $1,700
-HEADROOM                                               $70
+DRAWN                                               $1,650
+HEADROOM                                               $45
 ```
 
-Every Settlement now costs you **$56** in carrying cost on seven deeds plus **$136** in interest at 8% on $1,700. **That is $192 a round before you do anything at all.** You have $150 in clean cash.
+Every Settlement costs you **$56** in carrying cost on seven deeds plus **$132** in interest at 8% on $1,650.
 
-**Settlement, round 14.** Step 3 takes the $56 carrying cost, leaving you $94. Step 4 wants $136 of interest; your $94 covers part of it and the remaining **$42 capitalises** into the drawn balance.
-
-```
-Drawn: $1,700 -> $1,742      Base $1,770      Headroom $28
-```
-
-No call yet. But nothing has been fixed either.
-
-**Settlement, round 15.** You have no clean cash. The $56 carrying cost becomes distressed debt on the spot — carrying costs are not a margin event. Interest of 8% on $1,742 is $139, and all of it capitalises.
+**Settlement, round 14.** You have $133 in clean cash. Step 3 takes the $56 carrying cost, leaving $77. Step 4 wants $132 of interest; your $77 covers part, and the remaining **$55 capitalises** into the drawn balance — the obligation waterfall does not check your base.
 
 ```
-Drawn: $1,742 -> $1,881      Base $1,770
+Drawn: $1,650 -> $1,705      Base $1,695
 
-MARGIN CALL.  Short by $111.
+MARGIN CALL.  Short by $10.
 ```
 
-You did nothing wrong in round 15. Interest alone did this.
+You did nothing wrong. Interest alone did this, and it did it by exactly ten dollars.
 
 **Curing it.** You have until the end of the next Open phase.
 
 | Option | Effect |
 |---|---|
-| **Sell a rent future** on Tennessee (hoteled, 8-round window, model value **$753**). Sell it for $600 and repay the line. | Drawn → $1,281 against an unchanged base of $1,770. **Cured, with $489 of headroom.** You gave up expected rent, not borrowing base. This is the cleanest cure in the game. |
-| **Take a peer loan.** Borrow $200 from Ben at 5%/round and repay the line. | Drawn → $1,681 ≤ $1,770. **Cured**, and you have swapped 8% bank debt for 5% peer debt. Peer loans do not touch your borrowing base. Mind the collateral. |
-| **Sell a railroad** to a player for $190. | Raises $190 but removes $150 of base. Net improvement only **$40** — the shortfall goes $111 → $71. Not enough on its own. |
+| **Repay $10.** | Cured. Obviously do this if you have $10. |
+| **Sell a rent future** on Tennessee (hoteled, 8-round window, model value **$753**). Sell it for $600 and repay. | Drawn → $1,105 against an unchanged base of $1,695. Cured with $590 of headroom, and your Escort Service keeps paying, because ventures pay on rent *charged*. Rent futures raise cash without touching your borrowing base at all. |
+| **Take a peer loan.** Borrow $200 from Ben at 5%/round and repay the line. | Drawn → $1,505 ≤ $1,695. Cured, and you have swapped 8% bank debt for 5% peer debt. Peer loans do not touch your base either. |
 | **Bribe**, $200 in dirty cash. | Delays the call one round. Solves nothing, buys a round. |
-| **Mortgage New York Avenue.** | See below. Do not. |
+| **Mortgage New York Avenue.** | Costs you everything. See below. |
 
-**Why mortgaging is the trap.** New York Avenue has a hotel on it, and you cannot mortgage a developed property. You must sell the buildings back first, and sell-back is even across the group — so mortgaging one orange deed means **stripping all three hotels.** That is +$750 in cash but −$750 of base, then −$150 more when the mortgage lands. Your base falls from $1,770 to $870. Worse, your orange rents fall from $950 / $950 / $1,000 to $14 / $14 / nothing, with no full-group doubling because New York is mortgaged. You would trade the best rent position on the board for $850 and still be margin-called.
+**Why mortgaging is the trap.** New York has a hotel, and you cannot mortgage a developed property, so you must strip all three orange hotels first. Selling them back returns $675 and removes $675 of base — **exactly neutral on your shortfall**, and it costs you your entire orange rent. Then the mortgage itself raises $100 and removes $150 of base, leaving you **$50 worse off than before**. Your $10 shortfall becomes $60, your oranges now charge $14 a landing instead of $950, and New York is not in the colour group any more, so its two siblings lose the undeveloped double as well.
 
-**If you do not cure it.** You are marked at Settlement step 10 and liquidated **at the start of the following Open phase**, in a facilitator-run auction. Deeds go in descending face-value order — a railroad first, at a floor of 70% of $200 = $140.
+**If you do not cure it.** You are marked at Settlement step 10 and liquidated at the start of the following Open phase. The auction runs in descending face-value order, so a railroad at $200 face goes before any orange at $180. It sells at the **80% floor, $160**:
 
-> **This is why you cure it yourself.** At the 70% floor, each sale raises $140 and removes $150 of base, so your shortfall *grows by $10 with every deed the auction takes.* Forced liquidation at the floor does not converge. It only cures you if the other three players bid above 75% of face — which they have little reason to do when the bank will take it at 70%.
+```
+Drawn: $1,705 - $160        =  $1,545
+Base:  75% x $1,160 + $675  =  $1,545
+
+$1,545 <= $1,545.  Cured.  Liquidation stops.
+```
+
+**You paid a $200 railroad to close a $10 gap** — and 2.27% of every roll for the remaining ten rounds with it.
+
+> **The arithmetic behind that.** Each forced sale raises 80% of face and removes 75% of face from your base, so it narrows your shortfall by exactly **5% of that deed's face value**. The auction converges — but the most it can ever recover is 5% of your total unmortgaged deed face, which for Riley is **$68**. A breach larger than that eats the entire portfolio and still leaves distressed debt at the end. Cure small, cure early.
 
 ### Example 5 — When you cannot pay
 
-Round 17. You land on an opponent's hoteled Boardwalk. **Rent: $2,000.**
+Round 17. You hold seven undeveloped deeds — the pink group (St. Charles $140, States $140, Virginia $160), Short Line $200, Oriental $100, Baltic $60, Mediterranean $60 — for **$860 of face value**. No buildings. Your borrowing base is 75% of $860 = **$645**, and you have drawn $200 of it.
 
-You hold seven undeveloped deeds — the pink group (St. Charles $140, States $140, Virginia $160), Short Line $200, Oriental $100, Baltic $60, Mediterranean $60 — for **$860 of face value**. No buildings. Your borrowing base is 75% of $860 = **$645**, of which you have drawn $525. You have **$180** in clean cash, and $56 a round going out in carrying costs.
-
-An unpayable rent bill is **not** a margin call, so there is no auction and no liquidation. The app draws your remaining credit and books the rest:
+**First, the case that happens constantly and is not a crisis.** You land on Income Tax and owe $200 with $80 in clean cash.
 
 ```
-Clean cash                                                   $180
-Draw remaining credit  ($645 base - $525 drawn)             +$120  ->   $300
+Pay $80 clean.  Shortfall $120 capitalises into the credit line.
+Drawn: $200 -> $320.        Base $645.        Headroom $325.
 
-STILL OWED                                                          $1,700
-                                                    -> DISTRESSED DEBT
+Nothing else happens. No auction, no penalty, no distressed debt.
 ```
 
-Nobody comes to take your deeds. You keep all seven. What you have instead is $1,700 compounding at 15% a round:
+That is the normal case. Most unpayable bills in this game are just loans you did not ask for.
+
+**Now the case that is a crisis.** You land on an opponent's hoteled Boardwalk. **Rent: $2,000**, and you have $180.
+
+```
+Pay $180 clean.  Shortfall $1,820 capitalises.
+Drawn: $200 -> $2,020.      Base $645.
+
+MARGIN CALL.  Short by $1,375.
+```
+
+Note what did *not* happen: nobody took your deeds and nothing was written off. You still own all seven. What you have is one Open phase to find $1,375, or to raise your base by that much.
+
+**Realistically you cannot**, and this is where knowing the arithmetic in advance would have helped. Liquidation narrows a shortfall by 5% of each deed's face, so the most it can possibly recover for you is 5% of $860 = **$43**. Against a $1,375 breach that is irrelevant. The auction will take everything:
+
+```
+7 deeds auctioned at the 80% floor:  0.80 x $860   =   $688
+Drawn:  $2,020 - $688                              =  $1,332
+Deeds remaining: none.
+
+DISTRESSED DEBT  $1,332   at 15% compounding
+```
+
+*This* is what distressed debt means — not an unpaid bill, but the residue after you have been sold out completely.
 
 | End of round | Distressed debt |
 |---|---|
-| 18 | $1,955 |
-| 19 | $2,248 |
-| 20 | $2,585 |
-| 21 | $2,973 |
-| 22 | $3,419 |
-| 23 | $3,932 |
-| **24** | **$4,522** |
+| 19 | $1,532 |
+| 20 | $1,762 |
+| 21 | $2,026 |
+| 22 | $2,330 |
+| 23 | $2,679 |
+| **24** | **$3,081** |
 
-A $1,700 shortfall in round 17 subtracts **$4,522** from your final net worth if you ignore it. Every $100 you repay in round 18 is worth **$266** at scoring. Distressed debt is repayable in any Open phase and the app will never pay it down for you — that is your call, every round, and the compounding is the pressure.
+Every $100 you repay in round 19 is worth **$231** at scoring. It is repayable in any Open phase and the app will never pay it down for you.
 
-**And there is a second problem you just created.** You drew your credit line to exactly your borrowing base, so your headroom is zero. Next Settlement the $56 carrying cost has nowhere to come from and becomes more distressed debt, and 8% interest on $645 — $52 — capitalises into a drawn balance already at the ceiling.
+**One trap on the way in.** If any of those seven deeds carried a rent future or a deed option you had written, liquidation cancels it — and the make-whole to the futures holder, or the refunded premium to the option holder, is **added to your shortfall**. Writing options across your portfolio does not make you judgment-proof. It makes your liquidation more expensive.
 
-```
-Drawn: $645 -> $697      Base $645      MARGIN CALL, short $52
-```
-
-*That* one is a margin call, and it does trigger the auction if you leave it uncured. This is the shape of the spiral: the rent bill does not take your deeds, but the debt it leaves behind arranges for the credit line to take them a round later.
-
-**What you should have done in the Open phase before this.** Everything on this list beats both the 15% coupon and the 70% floor that follows it: sell rent futures on your deeds while you still own them, since a future raises cash without touching your borrowing base at all; sell a deed to another player at a negotiated price; borrow from a player at any rate under 15% per round, which is every rate a sane lender would offer; mortgage a deed nobody lands on and bank the $8 a round as well as the cash.
+**What you should have done in the Open phase before this.** You were sitting on $645 of base with only $200 drawn — $445 of unused headroom and no plan for a bad landing. Every one of these beats what happened: sell rent futures on your deeds while you still own them, since a future raises cash without touching your base; sell a deed to another player at a negotiated price rather than the bank's 80%; borrow from a player at any rate under 15%, which is every rate a sane lender would offer; mortgage a deed nobody lands on and bank the $8 a round as well as the cash. Keeping headroom is not caution. It is the only thing standing between one landing and losing the board.
 
 **And the thing nobody thinks of until round 22:** if you are the opponent who owns that hoteled Boardwalk, a player who cannot pay you is a player whose loan note now marks at 40% of principal in *your* net worth. Bankrupting the table is not obviously good for you.

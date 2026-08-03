@@ -612,7 +612,6 @@ describe('game creation', () => {
     for (const id of CONFIG.turnOrder) {
       const player = state.players[id]
       expect(player.cleanCash).toBe(ECONOMY.STARTING_CASH)
-      expect(player.draftBudget).toBe(ECONOMY.STARTING_CASH)
       expect(player.position).toBe(0)
       expect(player.consecutiveDoubles).toBe(0)
     }
@@ -725,7 +724,6 @@ function newPlayer(id: PlayerId): PlayerState {
     distressedDebt: 0,
     creditImpaired: false,
     ventures: [],
-    draftBudget: ECONOMY.STARTING_CASH,
     marginCallFlaggedAt: null,
     launderedThisPhase: false,
     briberyUsedThisRound: false,
@@ -881,9 +879,9 @@ export function replay(events: readonly GameEvent[]): GameState {
 - [ ] **Step 7: Run the test to verify it passes**
 
 Run: `npx vitest run packages/engine/src/contexts/session/session.test.ts`
-Expected: PASS. If `consecutiveDoubles` is flagged as an unknown property on
-`PlayerState`, add it to `core/state.ts` — see **CONTRACT ADDITIONS REQUIRED**
-at the end of this document.
+Expected: PASS. This depends on `PlayerState.consecutiveDoubles` existing and on
+`PlayerState.draftBudget` being gone — both folded into Task 2, and both restated
+under **CONTRACT ADDITIONS REQUIRED** at the end of this document.
 
 - [ ] **Step 8: Export session and the root reducer**
 
@@ -916,6 +914,8 @@ asserted directly. unlockMode 'all' bypasses gating entirely."
 - Create: `packages/engine/src/contexts/board/reduce.ts`
 - Create: `packages/engine/src/contexts/board/decide.ts`
 - Create: `packages/engine/src/contexts/board/index.ts`
+- Create: `packages/engine/src/contexts/credit/reduce.ts` (the waterfall's second step only; Task 9 extends this file)
+- Create: `packages/engine/src/contexts/credit/index.ts`
 - Modify: `packages/engine/src/core/reduce.ts`
 - Modify: `packages/engine/src/index.ts`
 - Test: `packages/engine/src/contexts/board/board.test.ts`
@@ -931,15 +931,32 @@ asserted directly. unlockMode 'all' bypasses gating entirely."
   - `function reduceBoard(state: GameState, event: GameEvent): GameState`
   - `type BoardCommand = { readonly kind: 'roll-dice'; readonly player: PlayerId; readonly dice: DiceRoll }`
   - `function decideBoard(state: GameState, command: BoardCommand): readonly GameEvent[] | Rejection`
+  - `function reduceCredit(state: GameState, event: GameEvent): GameState` handling `ObligationCapitalised`
 
-**Money handling contract, used by every payment in Tasks 5 and 6.** An event
-carries the *full* obligation. The reducer pays what the payer's clean cash
-covers; a player-to-player payment is topped up by the Treasury so the payee is
-always made whole, and a Treasury-bound payment simply books the shortfall as a
-receivable. `decide` emits `DistressedDebtIncurred` for the same shortfall, and
-Task 10 owns that reducer. Spec section 19.8: an unpayable tax, jail fee or rent
-bill becomes distressed debt immediately — there is no auto-draw on the credit
-line and no liquidation.
+**The universal obligation waterfall.** Spec section 19.8. Every obligation in
+the game — rent, taxes, the jail fee, interest, carrying cost, audit fines, CDS
+premiums — settles the same two-step way, and there is no third step:
+
+1. Pay from clean cash to the extent available.
+2. Any shortfall **capitalises into the drawn credit balance, uncapped and
+   without regard to the borrowing base.**
+
+The counterparty is therefore *always* paid in full. Clean cash never goes
+negative, the Treasury funds nothing, and **no ordinary unpayable obligation
+produces distressed debt**. Distressed debt now arises in exactly one place: a
+margin call went uncured, forced liquidation ran, and it stopped because the
+player had no unmortgaged deeds left (Task 10).
+
+**The asymmetry is the whole point.** Automatic obligations capitalise uncapped;
+voluntary credit draws stay capped at the borrowing base (Task 9). That gap
+between drawn balance and base is the only mechanism in the game that ever
+generates a margin call, so it must be encoded exactly this way.
+
+Mechanically: an event carries the *full* obligation and its reducer moves the
+full amount to the counterparty while floors the payer's clean cash at zero.
+`decide` emits a paired `ObligationCapitalised` for the shortfall, whose reducer
+lives in the `credit` context and raises `drawnCredit`. Money is conserved across
+the pair — the bank pool falls by exactly what the drawn balance rises.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -981,8 +998,13 @@ function apply(state: GameState, events: readonly GameEvent[]): GameState {
   return events.reduce(reduce, state)
 }
 
+/**
+ * Cash held by players, plus the Treasury, less what the bank has lent out.
+ * Every event must leave this constant.
+ */
 function totalMoney(state: GameState): number {
-  return Object.values(state.players).reduce((t, p) => t + p.cleanCash, 0) + state.treasury
+  return Object.values(state.players)
+    .reduce((t, p) => t + p.cleanCash - p.drawnCredit, 0) + state.treasury
 }
 
 describe('movement arithmetic', () => {
@@ -1044,18 +1066,30 @@ describe('rolling and moving', () => {
     expect(afterLuxury.treasury).toBe(100)
   })
 
-  it('books an unpayable tax as distressed debt rather than negative cash', () => {
+  it('capitalises an unpayable tax into drawn credit, uncapped', () => {
     const before = movementState({ position: 0, cleanCash: 30 })
     const events = roll(before, [1, 3])
     expect(events).toContainEqual({
       type: 'TaxPaid', player: 'P1', amount: 200, kind: 'income',
     })
     expect(events).toContainEqual({
-      type: 'DistressedDebtIncurred', player: 'P1', amount: 170,
+      type: 'ObligationCapitalised', player: 'P1', amount: 170, obligation: 'tax',
     })
     const after = apply(before, events)
     expect(after.players.P1.cleanCash).toBe(0)
-    expect(after.treasury).toBe(30)
+    expect(after.players.P1.drawnCredit).toBe(170)
+    // The Treasury is paid the full assessed tax regardless.
+    expect(after.treasury).toBe(200)
+    expect(after.players.P1.distressedDebt).toBe(0)
+    expect(totalMoney(after)).toBe(totalMoney(before))
+  })
+
+  it('capitalises without regard to the borrowing base', () => {
+    // No deeds, so the borrowing base is zero and a voluntary draw is impossible.
+    const before = movementState({ position: 0, cleanCash: 0 })
+    const after = apply(before, roll(before, [1, 3]))
+    expect(after.players.P1.drawnCredit).toBe(200)
+    expect(after.players.P1.cleanCash).toBe(0)
   })
 })
 
@@ -1182,12 +1216,16 @@ function withPlayer(
   }
 }
 
-/** Player pays the Treasury. Any shortfall stays unpaid as a receivable. */
+/**
+ * Step 1 of the obligation waterfall: the Treasury is paid the full obligation
+ * and the payer's clean cash floors at zero. The gap is closed by the paired
+ * ObligationCapitalised event, which the credit context reduces.
+ */
 function payTreasury(state: GameState, id: PlayerId, amount: Money): GameState {
-  const paid = Math.min(state.players[id].cleanCash, amount)
+  const cash = state.players[id].cleanCash
   return {
-    ...withPlayer(state, id, { cleanCash: state.players[id].cleanCash - paid }),
-    treasury: state.treasury + paid,
+    ...withPlayer(state, id, { cleanCash: cash - (amount - shortfall(cash, amount)) }),
+    treasury: state.treasury + amount,
   }
 }
 
@@ -1198,10 +1236,7 @@ function payFromTreasury(state: GameState, id: PlayerId, amount: Money): GameSta
   }
 }
 
-/**
- * Player-to-player transfer. The payee is always made whole; the Treasury funds
- * whatever the payer could not, against the distressed debt booked separately.
- */
+/** Step 1 of the waterfall for a player-to-player obligation. */
 export function transfer(
   state: GameState,
   from: PlayerId,
@@ -1209,13 +1244,11 @@ export function transfer(
   amount: Money,
 ): GameState {
   const cash = state.players[from].cleanCash
-  const unpaid = shortfall(cash, amount)
-  const paid = amount - unpaid
+  const paid = amount - shortfall(cash, amount)
   const afterPayer = withPlayer(state, from, { cleanCash: cash - paid })
-  const afterPayee = withPlayer(afterPayer, to, {
+  return withPlayer(afterPayer, to, {
     cleanCash: afterPayer.players[to].cleanCash + amount,
   })
-  return { ...afterPayee, treasury: afterPayee.treasury - unpaid }
 }
 
 export function reduceBoard(state: GameState, event: GameEvent): GameState {
@@ -1322,7 +1355,7 @@ export function decideBoard(
 
   if (state0.inJail) {
     events.push({ type: 'JailExited', player, fee: ECONOMY.JAIL_FEE })
-    pushShortfall(events, player, ledger.charge(ECONOMY.JAIL_FEE))
+    capitalise(events, player, ledger.charge(ECONOMY.JAIL_FEE), 'jail-fee')
   }
 
   if (isDoubles(dice) && state0.consecutiveDoubles === 2) {
@@ -1343,9 +1376,19 @@ export function decideBoard(
   return events
 }
 
-function pushShortfall(events: GameEvent[], player: PlayerId, unpaid: Money): void {
+/**
+ * Step 2 of the obligation waterfall: whatever clean cash could not cover
+ * capitalises into the drawn balance. Uncapped by design — the borrowing base
+ * is deliberately not consulted here.
+ */
+function capitalise(
+  events: GameEvent[],
+  player: PlayerId,
+  unpaid: Money,
+  obligation: ObligationKind,
+): void {
   if (unpaid > 0) {
-    events.push({ type: 'DistressedDebtIncurred', player, amount: unpaid })
+    events.push({ type: 'ObligationCapitalised', player, amount: unpaid, obligation })
   }
 }
 
@@ -1364,19 +1407,61 @@ function resolveLanding(
   }
   if (square === INCOME_TAX_SQUARE) {
     events.push({ type: 'TaxPaid', player, amount: ECONOMY.INCOME_TAX, kind: 'income' })
-    pushShortfall(events, player, ledger.charge(ECONOMY.INCOME_TAX))
+    capitalise(events, player, ledger.charge(ECONOMY.INCOME_TAX), 'tax')
     return events
   }
   if (square === LUXURY_TAX_SQUARE) {
     events.push({ type: 'TaxPaid', player, amount: ECONOMY.LUXURY_TAX, kind: 'luxury' })
-    pushShortfall(events, player, ledger.charge(ECONOMY.LUXURY_TAX))
+    capitalise(events, player, ledger.charge(ECONOMY.LUXURY_TAX), 'tax')
     return events
   }
   return events
 }
 ```
 
-- [ ] **Step 6: Write `contexts/board/index.ts` and wire the root reducer**
+`ObligationKind` is imported from `core/events.js` alongside `GameEvent`.
+
+- [ ] **Step 6: Write step 2 of the waterfall in `contexts/credit/reduce.ts`**
+
+The `credit` context begins here because Task 5 is the first task that generates
+an automatic obligation. Task 9 extends this same file with borrowing base,
+voluntary draws, interest and carrying cost. Keeping `drawnCredit` writes inside
+`credit` is what stops `board` from reaching into another context's state slice.
+
+`packages/engine/src/contexts/credit/reduce.ts`:
+
+```ts
+import type { GameEvent } from '../../core/events.js'
+import type { GameState } from '../../core/state.js'
+
+/**
+ * Step 2 of the universal obligation waterfall, spec section 19.8.
+ *
+ * This raises the drawn balance with NO borrowing-base check, and that is
+ * deliberate. Voluntary draws (Task 9) are capped at the base; automatic
+ * obligations are not. The gap the two open up is the only thing in the game
+ * that produces a margin call.
+ */
+export function reduceCredit(state: GameState, event: GameEvent): GameState {
+  if (event.type !== 'ObligationCapitalised') return state
+  const player = state.players[event.player]
+  return {
+    ...state,
+    players: {
+      ...state.players,
+      [event.player]: { ...player, drawnCredit: player.drawnCredit + event.amount },
+    },
+  }
+}
+```
+
+`packages/engine/src/contexts/credit/index.ts`:
+
+```ts
+export { reduceCredit } from './reduce.js'
+```
+
+- [ ] **Step 7: Write `contexts/board/index.ts` and wire the root reducer**
 
 `packages/engine/src/contexts/board/index.ts`:
 
@@ -1386,38 +1471,42 @@ export { reduceBoard, transfer } from './reduce.js'
 export { decideBoard, type BoardCommand } from './decide.js'
 ```
 
-In `packages/engine/src/core/reduce.ts`, add the board reducer to the chain:
+In `packages/engine/src/core/reduce.ts`, add the board and credit reducers:
 
 ```ts
 import { reduceBoard } from '../contexts/board/index.js'
+import { reduceCredit } from '../contexts/credit/index.js'
 import { initialState, reduceSession } from '../contexts/session/index.js'
 import type { GameEvent } from './events.js'
 import type { GameState } from './state.js'
 
 export function reduce(state: GameState, event: GameEvent): GameState {
-  return reduceBoard(reduceSession(state, event), event)
+  return reduceCredit(reduceBoard(reduceSession(state, event), event), event)
 }
 ```
 
-- [ ] **Step 7: Run the test to verify it passes**
+- [ ] **Step 8: Run the test to verify it passes**
 
 Run: `npx vitest run packages/engine/src/contexts/board/board.test.ts`
-Expected: PASS. `INVALID_DICE` must be added to `RejectionCode` — see
-**CONTRACT ADDITIONS REQUIRED**.
+Expected: PASS, including both `totalMoney` conservation checks. `INVALID_DICE`
+and the `ObligationCapitalised` event must be in the contract — see
+**CONTRACT ADDITIONS REQUIRED** and **NEW EVENTS REQUIRED**.
 
-- [ ] **Step 8: Export the board context and commit**
+- [ ] **Step 9: Export the board context and commit**
 
-Add `export * from './contexts/board/index.js'` to `packages/engine/src/index.ts`,
+Add `export * from './contexts/board/index.js'` and
+`export * from './contexts/credit/index.js'` to `packages/engine/src/index.ts`,
 then run `npm run typecheck && npm run lint && npm test`.
 
 ```bash
-git add packages/engine/src/contexts/board packages/engine/src/core/reduce.ts packages/engine/src/index.ts
+git add packages/engine/src/contexts/board packages/engine/src/contexts/credit packages/engine/src/core/reduce.ts packages/engine/src/index.ts
 git commit -m "feat(board): movement, doubles, jail, GO salary and fixed taxes
 
 Three consecutive doubles jails without moving. Leaving jail costs a
 mandatory \$50, matching the convention the landing-probability model
-assumes. Unpayable taxes and fees become distressed debt immediately
-per spec 19.8; clean cash never goes negative."
+assumes. Unpayable obligations capitalise into the drawn credit balance
+uncapped, per the universal waterfall in spec 19.8 — clean cash never
+goes negative and no distressed debt is booked."
 ```
 
 ---
@@ -1441,9 +1530,15 @@ import only `contexts/board/index.js`.
   - `function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money`
   - `function activeFutureOn(state: GameState, deedId: DeedId): RentFuture | null`
   - `function rentRecipient(state: GameState, deedId: DeedId): PlayerId | null`
-  - `function ownsUndevelopedGroup(state: GameState, group: ColorGroup, owner: PlayerId): boolean`
+  - `function ownsWholeGroup(state: GameState, group: ColorGroup, owner: PlayerId): boolean`
   - `function countOwnedInGroup(state: GameState, group: ColorGroup, owner: PlayerId): number`
-  - `decideBoard` now emits `RentCharged`, `RentRoutedToFuture` and a rent `DistressedDebtIncurred`.
+  - `decideBoard` now emits `RentCharged`, `RentRoutedToFuture` and a rent `ObligationCapitalised`.
+
+**Doubling is per-square, the standard Monopoly rule.** Where a player owns
+every deed in a colour group, rent doubles on each *individually* undeveloped
+deed in that group. A group with houses on one deed still pays doubled rent on
+its undeveloped siblings. Mortgaged deeds count toward neither the group test
+nor the railroad and utility counts.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1496,7 +1591,7 @@ describe('colour group rent', () => {
     expect(rentDue(board([{ deed: 'boardwalk', owner: 'P2' }]), 'boardwalk', ROLL)).toBe(50)
   })
 
-  it('doubles base rent when the owner holds the whole undeveloped group', () => {
+  it('doubles base rent when the owner holds the whole group', () => {
     const state = board([
       { deed: 'boardwalk', owner: 'P2' },
       { deed: 'park-place', owner: 'P2' },
@@ -1513,13 +1608,26 @@ describe('colour group rent', () => {
     expect(rentDue(state, 'boardwalk', ROLL)).toBe(50)
   })
 
-  it('stops doubling as soon as any deed in the group is developed', () => {
+  it('keeps doubling undeveloped siblings when another deed is developed', () => {
     const state = board([
       { deed: 'boardwalk', owner: 'P2' },
       { deed: 'park-place', owner: 'P2', houses: 1 },
     ])
-    expect(rentDue(state, 'boardwalk', ROLL)).toBe(50)
+    // Doubling is per-square: Boardwalk is still unimproved, so it still doubles.
+    expect(rentDue(state, 'boardwalk', ROLL)).toBe(100)
+    // Park Place is improved, so it reads its rent table and is never doubled.
     expect(rentDue(state, 'park-place', ROLL)).toBe(175)
+  })
+
+  it('doubles each undeveloped member of a three-deed group independently', () => {
+    const state = board([
+      { deed: 'st-james-place', owner: 'P2', houses: 2 },
+      { deed: 'tennessee-avenue', owner: 'P2' },
+      { deed: 'new-york-avenue', owner: 'P2' },
+    ])
+    expect(rentDue(state, 'st-james-place', ROLL)).toBe(200)
+    expect(rentDue(state, 'tennessee-avenue', ROLL)).toBe(28)
+    expect(rentDue(state, 'new-york-avenue', ROLL)).toBe(32)
   })
 
   it('stops doubling when any deed in the group is mortgaged', () => {
@@ -1641,7 +1749,7 @@ describe('who pays and who receives', () => {
     expect(events.some((e) => e.type === 'RentCharged')).toBe(false)
   })
 
-  it('makes the payee whole and books the payer shortfall as distressed debt', () => {
+  it('pays the payee in full and capitalises the payer shortfall', () => {
     const base = board([{ deed: 'boardwalk', owner: 'P2' }])
     const state: GameState = {
       ...base,
@@ -1649,12 +1757,15 @@ describe('who pays and who receives', () => {
     }
     const { seeded, events } = land(state, 32, [3, 4])
     expect(events).toContainEqual({
-      type: 'DistressedDebtIncurred', player: 'P1', amount: 40,
+      type: 'ObligationCapitalised', player: 'P1', amount: 40, obligation: 'rent',
     })
     const after = events.reduce(reduce, seeded)
     expect(after.players.P1.cleanCash).toBe(0)
+    expect(after.players.P1.drawnCredit).toBe(40)
+    expect(after.players.P1.distressedDebt).toBe(0)
     expect(after.players.P2.cleanCash).toBe(ECONOMY.STARTING_CASH + 50)
-    expect(after.treasury).toBe(-40)
+    // The Treasury funds nothing; the bank does, via the drawn balance.
+    expect(after.treasury).toBe(0)
   })
 })
 ```
@@ -1691,20 +1802,18 @@ export function countOwnedInGroup(
 }
 
 /**
- * Spec section 2: base rent doubles on a full colour group with nothing built.
- * Any mortgaged or developed member of the group cancels the doubling.
+ * Spec section 2: owning every deed in a colour group doubles the rent on each
+ * INDIVIDUALLY undeveloped deed in it. Houses on one deed do not stop its
+ * undeveloped siblings from doubling. A mortgaged member breaks the group.
  */
-export function ownsUndevelopedGroup(
+export function ownsWholeGroup(
   state: GameState,
   group: ColorGroup,
   owner: PlayerId,
 ): boolean {
   return GROUP_MEMBERS[group].every((id) => {
     const deed = state.deeds[id]
-    return deed !== undefined
-      && deed.owner === owner
-      && !deed.mortgaged
-      && deed.houses === 0
+    return deed !== undefined && deed.owner === owner && !deed.mortgaged
   })
 }
 
@@ -1721,11 +1830,12 @@ export function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money
     const multiplier = UTILITY_MULTIPLIER[countOwnedInGroup(state, 'utility', owner)] ?? 0
     return multiplier * diceTotal(dice)
   }
+  // A developed deed reads its rent table and is never doubled.
   if (deed.houses > 0) {
     return deed.rentTable[deed.houses] ?? 0
   }
   const base = deed.rentTable[0] ?? 0
-  return ownsUndevelopedGroup(state, deed.group, owner) ? base * 2 : base
+  return ownsWholeGroup(state, deed.group, owner) ? base * 2 : base
 }
 
 export function activeFutureOn(state: GameState, deedId: DeedId): RentFuture | null {
@@ -1767,12 +1877,12 @@ function resolveLanding(
   }
   if (square === INCOME_TAX_SQUARE) {
     events.push({ type: 'TaxPaid', player, amount: ECONOMY.INCOME_TAX, kind: 'income' })
-    pushShortfall(events, player, ledger.charge(ECONOMY.INCOME_TAX))
+    capitalise(events, player, ledger.charge(ECONOMY.INCOME_TAX), 'tax')
     return events
   }
   if (square === LUXURY_TAX_SQUARE) {
     events.push({ type: 'TaxPaid', player, amount: ECONOMY.LUXURY_TAX, kind: 'luxury' })
-    pushShortfall(events, player, ledger.charge(ECONOMY.LUXURY_TAX))
+    capitalise(events, player, ledger.charge(ECONOMY.LUXURY_TAX), 'tax')
     return events
   }
 
@@ -1795,7 +1905,7 @@ function resolveLanding(
       type: 'RentRoutedToFuture', contract: contract.id, holder: contract.holder, amount,
     })
   }
-  pushShortfall(events, player, ledger.charge(amount))
+  capitalise(events, player, ledger.charge(amount), 'rent')
   return events
 }
 ```
@@ -1823,10 +1933,12 @@ Run: `npm run typecheck && npm run lint && npm test`
 git add packages/engine/src/contexts/board
 git commit -m "feat(board): rent tables, group doubling, railroads and utilities
 
-Full-group doubling requires every member owned, unmortgaged and
-undeveloped. Railroads pay 25/50/100/200 by unmortgaged count; utilities
-pay 4x or 10x the dice total. Rent routes to an active futures holder
-per spec 19.2, and nobody pays themselves."
+Doubling is per-square, the standard rule: owning the full unmortgaged
+colour group doubles rent on each individually undeveloped deed in it.
+Railroads pay 25/50/100/200 by unmortgaged count; utilities pay 4x or
+10x the dice total. Rent routes to an active futures holder per spec
+19.2, nobody pays themselves, and an unpayable bill capitalises into
+the payer's drawn credit while the payee is paid in full."
 ```
 
 ---
@@ -2406,7 +2518,7 @@ describe('rules 3, 4, 5 and 6 — cascades and the guarantees', () => {
     const base = draftState()
     const broke: GameState = {
       ...base,
-      players: { ...base.players, P4: { ...base.players.P4, draftBudget: 10, cleanCash: 10 } },
+      players: { ...base.players, P4: { ...base.players.P4, cleanCash: 10 } },
     }
     let state = broke
     state = submit(state, 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
@@ -2417,7 +2529,7 @@ describe('rules 3, 4, 5 and 6 — cascades and the guarantees', () => {
     expect(award?.price).toBe(0)
     expect(face(award?.deed ?? '')).toBe(60)
     const after = events.reduce(reduce, state)
-    expect(after.players.P4.draftBudget).toBe(10)
+    expect(after.players.P4.cleanCash).toBe(10)
     expect(deedCount(after, 'P4')).toBe(1)
   })
 })
@@ -2436,9 +2548,15 @@ describe('the whole draft', () => {
       expect(state.draft?.round, `after round ${round}`).toBe(round + 1)
     }
     expect(state.draft?.complete).toBe(true)
+    // One unified pot: cash spent on deeds is exactly cash no longer available.
     for (const player of CONFIG.turnOrder) {
       expect(deedCount(state, player), player).toBe(7)
-      expect(state.players[player].draftBudget).toBe(state.players[player].cleanCash)
+      const acquired = Object.values(state.deeds)
+        .filter((d) => d.owner === player)
+        .reduce((total, d) => total + d.faceValue, 0)
+      expect(state.players[player].cleanCash, player)
+        .toBe(ECONOMY.STARTING_CASH - acquired)
+      expect(state.players[player].drawnCredit, player).toBe(0)
     }
     expect(Object.values(state.deeds).every((d) => d.owner !== null)).toBe(true)
     expect(DEED_IDS).toHaveLength(28)
@@ -2568,7 +2686,7 @@ export function resolveDraftRound(state: GameState): readonly GameEvent[] {
   for (const player of order) {
     const floor = cheapest()
     if (floor === null) continue
-    if (state.players[player].draftBudget < faceValueOf(floor)) {
+    if (state.players[player].cleanCash < faceValueOf(floor)) {
       award(player, floor, 0, false)
       continue
     }
@@ -2648,7 +2766,7 @@ export function resolveDraftRound(state: GameState): readonly GameEvent[] {
   for (const player of stragglers) {
     const deed = cheapest()
     if (deed === null) break
-    const price = state.players[player].draftBudget >= faceValueOf(deed)
+    const price = state.players[player].cleanCash >= faceValueOf(deed)
       ? faceValueOf(deed)
       : 0
     award(player, deed, price, false)
@@ -2714,12 +2832,8 @@ export function reduceDraft(state: GameState, event: GameEvent): GameState {
         deeds: { ...state.deeds, [event.deed]: { ...deed, owner: event.player } },
         players: {
           ...state.players,
-          [event.player]: {
-            ...player,
-            // The budget IS the operating cash. Spec section 4: one unified pot.
-            draftBudget: player.draftBudget - event.price,
-            cleanCash: player.cleanCash - event.price,
-          },
+          // Spec section 4: one unified pot. The draft spends operating cash.
+          [event.player]: { ...player, cleanCash: player.cleanCash - event.price },
         },
         treasury: state.treasury + event.price,
       }
@@ -2790,7 +2904,7 @@ export function decideDraft(
     if (maxBid < faceValueOf(first)) {
       return reject('BID_BELOW_FACE', `Your bid must be at least the $${faceValueOf(first)} face value.`)
     }
-    if (maxBid > state.players[player].draftBudget) {
+    if (maxBid > state.players[player].cleanCash) {
       return reject('BID_EXCEEDS_BUDGET', 'Your bid is more than your remaining budget.')
     }
     return [{ type: 'DraftSubmitted', player, ranked, maxBid }]
@@ -2800,7 +2914,7 @@ export function decideDraft(
   for (const player of state.config.turnOrder) {
     if (hasSubmitted(state, player)) continue
     // Rule 6 players never submit; everyone else must.
-    if (floor !== null && state.players[player].draftBudget < faceValueOf(floor)) continue
+    if (floor !== null && state.players[player].cleanCash < faceValueOf(floor)) continue
     return reject('ALREADY_SUBMITTED', `${player} has not submitted this draft round yet.`)
   }
   return resolveDraftRound(state)
@@ -2860,8 +2974,32 @@ what guarantees every player exactly seven deeds."
 
 ## NEW EVENTS REQUIRED
 
-One event beyond the Task 2 schema. Merge into `core/events.ts` under the
-`--- draft ---` group:
+Two events beyond the Task 2 schema.
+
+**1. `ObligationCapitalised`** — step 2 of the universal obligation waterfall.
+Merge into `core/events.ts` under the `--- credit ---` group:
+
+```ts
+export type ObligationKind =
+  | 'rent' | 'tax' | 'jail-fee' | 'interest' | 'carrying-cost'
+  | 'audit-fine' | 'cds-premium' | 'peer-loan-interest'
+```
+
+```ts
+  | { type: 'ObligationCapitalised'; player: PlayerId; amount: Money
+      obligation: ObligationKind }
+```
+
+It records a shortfall capitalising into the drawn balance without a
+borrowing-base check. A distinct event rather than a reuse of `CreditDrawn`
+because the capped/uncapped asymmetry between voluntary draws and automatic
+obligations is the only mechanism that generates a margin call — a facilitator
+reading the log has to be able to see which kind of borrowing just happened.
+The `obligation` discriminator is a closed union covering every obligation the
+waterfall touches; Tasks 9-17 emit the remaining members. Carries no randomness,
+so `STOCHASTIC_EVENTS` is unchanged.
+
+**2. `DraftRoundResolved`** — merge under the `--- draft ---` group:
 
 ```ts
   | { type: 'DraftRoundResolved'; round: RoundNumber }
@@ -2870,20 +3008,26 @@ One event beyond the Task 2 schema. Merge into `core/events.ts` under the
 It marks the boundary between draft rounds. Without it the reducer has to infer
 "four awards have landed, so start the next round", which breaks the moment a
 round awards fewer than four deeds — and it makes the log unreadable at exactly
-the point a facilitator most wants to read it. It carries no randomness, so
-`STOCHASTIC_EVENTS` is unchanged.
+the point a facilitator most wants to read it.
 
-**One event should be removed.** `DraftRoundSkipped { player, compensation }` and
+**One event should be removed** (adopted by the coordinator).
+`DraftRoundSkipped { player, compensation }` and
 `ECONOMY.DRAFT_SKIP_COMPENSATION` ($150) are dead. Spec section 3 rule 6 grants
 the cheapest remaining deed at no cost rather than paying compensation, and
 section 3 explains why in terms the design depends on: the flat per-deed carrying
 cost is incidence-neutral only because every player holds exactly seven deeds.
-`docs/reference/rulebook-content.md` line 504 still lists the $150 payment and is
-stale. Task 8 emits `DraftDeedAwarded` with `price: 0` instead.
+Task 8 emits `DraftDeedAwarded` with `price: 0` instead.
+
+**`DistressedDebtIncurred` stays in the schema but is no longer emitted here.**
+Under the rewritten spec section 19.8, distressed debt arises in exactly one
+circumstance: a margin call went uncured, forced liquidation ran, and it stopped
+because the player had no unmortgaged deeds left. That is Task 10's territory.
+No path in Tasks 3-8 routes an ordinary unpayable obligation to distressed debt.
 
 ## CONTRACT ADDITIONS REQUIRED
 
-Two additions to the Task 2 contract. Neither introduces a parallel type.
+All three are already adopted into Task 2; restated here so Tasks 3-8 are
+readable standalone.
 
 1. **`PlayerState.consecutiveDoubles: number`** in `core/state.ts`:
 
@@ -2900,23 +3044,32 @@ seeds it at 0; `DiceRolled` increments or resets it; `SentToJail` clears it.
 from the facilitator's keyboard, which is a system boundary, and no existing code
 describes "that is not a die".
 
+3. **`PlayerState.draftBudget` deleted.** Spec section 4 gives one unified pot,
+so the field was `cleanCash` viewed twice. Every draft read and write in Task 8
+now uses `cleanCash`, and the seven-round test asserts each player's ending cash
+equals `STARTING_CASH` minus the face value they acquired.
+
+**Also new in `config/economy.ts`** (Task 3, step 1): `HOUSE_COST_MULTIPLIER: 0.9`
+and `BUILDING_SELLBACK_RATE: 0.5`.
+
 ## JUDGMENT CALLS
 
-Where the spec left a gap, this is what was chosen and why.
+Where the spec left a gap, this is what was chosen and why. Rows marked
+**[revised]** were changed after the spec was rewritten mid-task.
 
 | # | Question | Choice |
 |---|---|---|
-| 1 | Does full-group rent doubling need the whole set undeveloped, or just the landed square? | **Whole set.** Spec section 2 says "undeveloped sets"; `docs/reference/rulebook-content.md` line 157 is explicit — "you own the entire colour group and none of it is developed". Standard Monopoly doubles per-square; this game does not. |
-| 2 | Does a mortgaged member of a group cancel the doubling? | **Yes.** A mortgaged deed "contributes nothing", and building already requires the full *unmortgaged* group. Consistent treatment. |
-| 3 | Do mortgaged railroads and utilities count toward the owned-count? | **No.** Same reasoning: a mortgaged deed contributes nothing. |
+| 1 | Does full-group rent doubling need the whole set undeveloped, or just the landed square? | **[revised] Per-square** — the standard Monopoly rule. Owning every deed in a group doubles rent on each *individually* undeveloped deed; houses on one sibling do not stop the others doubling. |
+| 2 | Does a mortgaged member of a group cancel the doubling? | **Yes**, now explicit in the spec. A mortgaged deed contributes nothing, and building already requires the full *unmortgaged* group. |
+| 3 | Do mortgaged railroads and utilities count toward the owned-count? | **No.** Same reasoning; also now explicit in the spec. |
 | 4 | Rent on a deed the bank took in a liquidation? | **Zero.** Spec section 5 says the deed "becomes unowned-by-bank and is not re-drafted" — it is out of play. |
-| 5 | Who funds an unpayable rent bill? | **The Treasury.** The payee is always made whole; the payer's shortfall becomes distressed debt and the Treasury books the receivable. Money stays conserved, and it matches how an unpayable tax already works. |
-| 6 | Does the engine auto-draw on the credit line to cover a shortfall? | **No.** Spec section 5 makes drawing an Open-phase player action. Spec 19.8 says an unpayable tax, fine or rent becomes distressed debt immediately — no liquidation, no auction. |
+| 5 | Who funds an unpayable rent bill? | **[revised] The bank, via the payer's drawn credit.** The payee is paid in full; the shortfall capitalises into the payer's drawn balance. The Treasury funds nothing and no distressed debt is booked. |
+| 6 | Does an automatic obligation respect the borrowing base? | **[revised] No — uncapped.** Voluntary draws stay capped at the base; automatic obligations capitalise without a check. That gap is the only thing in the game that generates a margin call, so it is encoded explicitly and tested directly (a player with no deeds, and therefore no base, still capitalises a $200 tax). |
 | 7 | Does "total face value acquired so far" include this draft round's awards? | **No, snapshotted at round start.** Otherwise resolution depends on the order deeds happen to be awarded, and the same submissions could produce different outcomes. |
 | 8 | When does rule 6 (free cheapest deed) get evaluated? | **Before contests, in turn order.** "Cheapest remaining" is only well defined at a fixed point in the resolution, and a player who cannot afford anything cannot submit a valid triple anyway. It is re-checked at rule 5 for anyone who cascades all the way out. |
 | 9 | Two players both hit rule 5 in the same round — who picks first? | **Lower total face value acquired, then turn order** — the same tie-break as rule 4, applied for consistency rather than inventing a third. |
 | 10 | Does a player leaving Jail on doubles get the extra roll? | **Yes.** The Markov model transitions out of state `(10, 0)` with the ordinary doubles rule, so the engine must match or the fixture assertion is a lie. |
 | 11 | Who advances the active player during Movement? | **Nobody — the facilitator.** Spec section 2: phases advance manually, with no enforced timer. `activePlayer` simply tracks whoever last rolled, set on `DiceRolled`. This avoids inventing a `TurnAdvanced` event. |
-| 12 | Where do railroad rents, utility multipliers and the 1.19 doubles factor live? | **`config/board.ts`.** The main plan assigns "rent tables" to that file, and these are rent tables. `config/economy.ts` keeps the tunable economic constants; the physical board is not tunable. |
-| 13 | `PlayerState.draftBudget` versus `cleanCash`. | **Kept in lockstep.** Spec section 4 gives one unified budget, so the two fields are the same pot viewed twice. Both are decremented on every award and the seven-round test asserts they stay equal. `draftBudget` is a candidate for deletion in a later cleanup. |
+| 12 | Where do railroad rents, utility multipliers and the 1.19 doubles factor live? | **`config/board.ts`.** The main plan assigns "rent tables" to that file, and these are rent tables. `config/economy.ts` keeps the tunable economic constants; the physical board is not tunable. `HOUSE_COST_MULTIPLIER` is a tunable, so it lives in `economy.ts` and is applied in `board.ts`. |
+| 13 | Which context reduces `ObligationCapitalised`? | **`credit`.** It writes `drawnCredit`, which is credit's state slice, so `board` must not touch it. Task 5 therefore creates a two-file `contexts/credit/` holding only that reducer, and Task 9 extends the same file. |
 | 14 | The fixture spells colour groups `"light blue"`; `ColorGroup` is `'light-blue'`. | **Normalise in the test.** The fixture is a derivation artefact and authoritative on probabilities, not on our type spellings. |
