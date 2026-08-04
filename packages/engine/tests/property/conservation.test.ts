@@ -29,7 +29,12 @@ describe('money is conserved', () => {
         const opening = conservedTotal(trace.before[0] ?? trace.final)
         expect(conservedTotal(trace.final)).toBe(opening + expectedDelta(trace.events))
       }),
-      { numRuns: 200 },
+      // 400, not 200. The generator became `fc.oneof(general, distress)` without the
+      // budget moving, which halved the pure-general sample this property had been
+      // sized against — and this is the property that failed once and could not be
+      // reproduced. Doubling restores the original general-history coverage while
+      // keeping the distress mix that `DistressedDebtRepaid` needs.
+      { numRuns: 400 },
     )
   })
 
@@ -47,7 +52,12 @@ describe('money is conserved', () => {
           ).toBe(conservedTotal(before) + expectedDelta(batch.events))
         })
       }),
-      { numRuns: 200 },
+      // 400, not 200. The generator became `fc.oneof(general, distress)` without the
+      // budget moving, which halved the pure-general sample this property had been
+      // sized against — and this is the property that failed once and could not be
+      // reproduced. Doubling restores the original general-history coverage while
+      // keeping the distress mix that `DistressedDebtRepaid` needs.
+      { numRuns: 400 },
     )
   })
 
