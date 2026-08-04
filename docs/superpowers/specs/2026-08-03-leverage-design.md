@@ -227,7 +227,16 @@ fixed schedule and takes in carrying costs and all interest paid to the bank:
 | Carrying cost | In | $8 per unmortgaged deed per player per round |
 | Credit line interest | In | variable, and now material |
 | GO salary | Out | $350 per pass |
-| Era II stimulus | Out | $300 per player at round 7, **as an interest-bearing loan** |
+
+The **Era II stimulus is not a Treasury outflow.** It is a compulsory draw on the credit
+line: the player receives $300 in cash and $300 is added to their drawn balance, exactly
+as if they had drawn it voluntarily. The Treasury is untouched.
+
+This matters for money conservation. The credit line creates the money it lends — which
+is why an ordinary draw leaves the Treasury unchanged — while the Treasury is the fiscal
+entity that collects carrying cost, interest and taxes and pays GO salary. Funding the
+stimulus from the Treasury as well as from the credit line would count it twice and break
+the conservation identity `Σ cleanCash − Σ drawnCredit − Σ distressedDebt + treasury`.
 
 The Era II stimulus is a **loan, not a grant** — it is added to the player's drawn
 credit balance and accrues at the prevailing era rate. This single change converts
