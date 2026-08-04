@@ -1,19 +1,8 @@
-import type { GameState, PlayerState, RentFuture } from '../../core/state.js'
+import type { GameState, RentFuture } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import type { PlayerId } from '../../core/types.js'
 import { transfer } from '../board/index.js'
 import { reduceDeedOptions } from './reduce-options.js'
-
-function withPlayer(
-  state: GameState,
-  id: PlayerId,
-  patch: Partial<PlayerState>,
-): GameState {
-  return {
-    ...state,
-    players: { ...state.players, [id]: { ...state.players[id], ...patch } },
-  }
-}
 
 function deedOwner(state: GameState, deed: string): PlayerId | null {
   const d = state.deeds[deed]
@@ -68,20 +57,15 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
       return transfer(state, owner, f.holder, event.amount)
     }
 
-    /**
-     * Retained defensively though no emitter remains: Task 20 found this context's
-     * only emitter (`makeWholeOnMortgage`'s shortfall) routing a shortfall here
-     * instead of through `ObligationCapitalised`, which broke money conservation —
-     * `distressedDebt` rose with no Treasury leg and no matching drop elsewhere.
-     * Spec 19.7 reserves this event for the terminal state after forced liquidation
-     * exhausts a portfolio; nothing in `markets` reaches that state.
+    /*
+     * The `DistressedDebtIncurred` case stood here, "retained defensively though no
+     * emitter remains". Both the event and this case are now gone: Task 20 found this
+     * context's only emitter (`makeWholeOnMortgage`'s shortfall) routing through it
+     * instead of through `ObligationCapitalised`, which broke money conservation
+     * (`distressedDebt` rose with no Treasury leg and nothing falling to match). A
+     * reducer kept alive for an event nothing emits is not a defence — it is a live
+     * landing pad for the next caller to make the same mistake.
      */
-    case 'DistressedDebtIncurred': {
-      const p = state.players[event.player]
-      return withPlayer(state, event.player, {
-        distressedDebt: p.distressedDebt + event.amount,
-      })
-    }
 
     case 'RentFutureExpired':
       return { ...state, futures: state.futures.filter((f) => f.id !== event.id) }

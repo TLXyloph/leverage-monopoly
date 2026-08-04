@@ -2,7 +2,6 @@ import { ECONOMY } from '../../config/economy.js'
 import { floorPercent } from '../../core/money.js'
 import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
 import type { DeedOption, GameState, RentFuture } from '../../core/state.js'
-import type { GameEvent } from '../../core/events.js'
 import { type Rejection, reject } from '../../core/errors.js'
 import { activeFutureOn, rentRecipient } from '../board/index.js'
 import { borrowingBase } from '../credit/index.js'
@@ -67,34 +66,17 @@ export function rentPayment(
   }
 }
 
-/**
- * The single entry point board's landing resolution calls instead of emitting
- * RentCharged itself. RentCharged.to is always the actual recipient; the deed's
- * owner, which is what ventures key off per spec 19.5, is read from the deed.
- * RentRoutedToFuture carries no money — it attributes the cashflow to the
- * contract so pooled futures can be settled in the Task 16 waterfall.
+/*
+ * `rentEvents` used to live here: a second emitter of `RentCharged` +
+ * `RentRoutedToFuture`, whose docstring claimed board's landing resolution called it.
+ * Board never did — it builds the same two events itself at `board/decide.ts` and,
+ * crucially, also runs the payer's clean cash through the obligation waterfall,
+ * capitalising any shortfall (spec 19.8) and paying the deed owner's venture kicker
+ * (spec 19.5). This one did neither. Two rent implementations, one publicly exported
+ * and missing two legs, is a divergence waiting to happen, so it is deleted rather than
+ * delegated: `rentPayment` above already exposes the routing DECISION (payer, recipient,
+ * contract) with no events, which is all any caller outside `board` legitimately needs.
  */
-export function rentEvents(
-  state: GameState,
-  deed: DeedId,
-  lander: PlayerId,
-  amount: Money,
-): readonly GameEvent[] {
-  const p = rentPayment(state, deed, lander, amount)
-  if (p === null) return []
-  const events: GameEvent[] = [
-    { type: 'RentCharged', from: p.payer, to: p.recipient, deed, amount: p.amount },
-  ]
-  if (p.contract !== null) {
-    events.push({
-      type: 'RentRoutedToFuture',
-      contract: p.contract,
-      holder: p.recipient,
-      amount: p.amount,
-    })
-  }
-  return events
-}
 
 /**
  * Port declared by Task 10 (`credit`'s `CreditPorts.rentFutureMakeWhole`), and also

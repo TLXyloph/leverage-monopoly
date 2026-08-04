@@ -20,7 +20,6 @@ export {
   outstandingOption,
   poolHoldingDeedOption,
   poolHoldingRentFuture,
-  rentEvents,
   rentFutureMakeWhole,
   rentPayment,
   routingFutureFor,

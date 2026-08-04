@@ -83,8 +83,18 @@ export function poissonQuantile(lambda: number, q: number): number {
  * syntax differs, which is exactly what the AST rule inspects.
  */
 function floorProduct(a: number, b: number): Money {
-  const product = a * b
-  return Math.floor(product)
+  /*
+   * `a` is an expected hit COUNT (or a Poisson quantile), not a rate in [0, 1], so
+   * `floorPercent`'s basis-point conversion does not apply: `Math.round(a * 10_000)`
+   * would quantise the count itself. The rule exists to catch `Math.floor(money *
+   * rate)`; this is `Math.floor(count * money)`. Previously this evaded the AST
+   * selector by splitting the multiply into a named temporary, which is numerically
+   * identical and therefore pure camouflage. The direct form plus an explicit,
+   * justified disable is the honest version: the exception is now visible to anyone
+   * grepping for suppressions.
+   */
+  // eslint-disable-next-line no-restricted-syntax -- see above: count x money, not money x rate.
+  return Math.floor(a * b)
 }
 
 function emptyValuation(

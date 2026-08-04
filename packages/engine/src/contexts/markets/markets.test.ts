@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { ECONOMY } from '../../config/economy.js'
 import { isRejection } from '../../core/errors.js'
+import type { GameEvent } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
 import { PLAYER_IDS } from '../../core/types.js'
 import { activeFutureOn, landingProbability, rentRecipient } from '../board/index.js'
@@ -14,7 +15,7 @@ import {
 } from './decide.js'
 import type { OriginateRentFuture } from './decide.js'
 import {
-  isEncumbered, mortgageImpact, rentEvents, rentFutureMakeWhole, rentPayment,
+  isEncumbered, mortgageImpact, rentFutureMakeWhole, rentPayment,
   routingFutureFor,
 } from './selectors.js'
 import { reduceMarkets } from './reduce.js'
@@ -389,23 +390,20 @@ describe('rent routing during an active window', () => {
   it('routes rent to the holder when a third party lands', () => {
     const state = routed(10)
     expect(rentRecipient(state, 'st-james-place')).toBe('P2')
-    expect(rentEvents(state, 'st-james-place', 'P3', 14)).toEqual([
-      { type: 'RentCharged', from: 'P3', to: 'P2', deed: 'st-james-place', amount: 14 },
-      { type: 'RentRoutedToFuture', contract: CONTRACT.id, holder: 'P2', amount: 14 },
-    ])
+    expect(rentPayment(state, 'st-james-place', 'P3', 14)).toEqual({
+      payer: 'P3', recipient: 'P2', amount: 14, contract: CONTRACT.id,
+    })
   })
 
   it('SPEC 19.2: the owner landing on their own deed owes nothing, so no payment occurs', () => {
     const state = routed(10)
     expect(rentPayment(state, 'st-james-place', 'P1', 14)).toBeNull()
-    expect(rentEvents(state, 'st-james-place', 'P1', 14)).toEqual([])
   })
 
   it('SPEC 19.2: the futures holder landing on a deed they do not own pays nothing', () => {
     const state = routed(10)
     // P2 holds the future, P1 owns the deed. P2 would owe rent to itself.
     expect(rentPayment(state, 'st-james-place', 'P2', 14)).toBeNull()
-    expect(rentEvents(state, 'st-james-place', 'P2', 14)).toEqual([])
   })
 
   it('pays the owner before the window opens and after it closes', () => {
@@ -414,9 +412,9 @@ describe('rent routing during an active window', () => {
     expect(activeFutureOn(early, 'st-james-place')).toBeNull()
     expect(isEncumbered(early, 'st-james-place')).toBe(true)
     expect(rentRecipient(early, 'st-james-place')).toBe('P1')
-    expect(rentEvents(early, 'st-james-place', 'P3', 14)).toEqual([
-      { type: 'RentCharged', from: 'P3', to: 'P1', deed: 'st-james-place', amount: 14 },
-    ])
+    expect(rentPayment(early, 'st-james-place', 'P3', 14)).toEqual({
+      payer: 'P3', recipient: 'P1', amount: 14, contract: null,
+    })
 
     const late = routed(17)
     expect(rentRecipient(late, 'st-james-place')).toBe('P1')
@@ -432,7 +430,7 @@ describe('rent routing during an active window', () => {
       futures: [CONTRACT],
       deeds: { 'st-james-place': { ...stJames('P1'), mortgaged: true } },
     })
-    expect(rentEvents(state, 'st-james-place', 'P3', 14)).toEqual([])
+    expect(rentPayment(state, 'st-james-place', 'P3', 14)).toBeNull()
   })
 })
 
@@ -446,11 +444,10 @@ describe('encumbrance follows the deed', () => {
     // markets holds no owner reference, so the obligation transfers with the deed.
     expect(isEncumbered(traded, 'st-james-place')).toBe(true)
     expect(rentRecipient(traded, 'st-james-place')).toBe('P2')
-    expect(rentEvents(traded, 'st-james-place', 'P4', 14)).toEqual([])
-    expect(rentEvents(traded, 'st-james-place', 'P1', 14)).toEqual([
-      { type: 'RentCharged', from: 'P1', to: 'P2', deed: 'st-james-place', amount: 14 },
-      { type: 'RentRoutedToFuture', contract: CONTRACT.id, holder: 'P2', amount: 14 },
-    ])
+    expect(rentPayment(traded, 'st-james-place', 'P4', 14)).toBeNull()
+    expect(rentPayment(traded, 'st-james-place', 'P1', 14)).toEqual({
+      payer: 'P1', recipient: 'P2', amount: 14, contract: CONTRACT.id,
+    })
   })
 })
 
@@ -557,7 +554,7 @@ function totalMoney(state: GameState): number {
   )
 }
 
-function applyAll(state: GameState, events: ReturnType<typeof rentEvents>): GameState {
+function applyAll(state: GameState, events: readonly GameEvent[]): GameState {
   return events.reduce(reduceMarkets, state)
 }
 
@@ -569,7 +566,7 @@ function applyAll(state: GameState, events: ReturnType<typeof rentEvents>): Game
  * them through `core/reduce.ts`, or they would (and briefly did) pass by failing to
  * apply half of the pair rather than by the pair actually conserving money.
  */
-function applyAllAcrossContexts(state: GameState, events: ReturnType<typeof rentEvents>): GameState {
+function applyAllAcrossContexts(state: GameState, events: readonly GameEvent[]): GameState {
   return events.reduce(reduceRoot, state)
 }
 
