@@ -47,6 +47,10 @@
           {
             "selector": "MemberExpression[object.object.name='window'][object.property.name='Math'][property.name='random']",
             "message": "The engine must be deterministic. Randomness enters as event data. Use Math.random through a dependency injection or event parameter."
+          },
+          {
+            "selector": "ImportExpression",
+            "message": "The engine performs no I/O. Dynamic imports of Node.js modules are forbidden."
           }
         ]
       }
