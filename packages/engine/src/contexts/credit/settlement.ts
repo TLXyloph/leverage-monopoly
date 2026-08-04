@@ -3,7 +3,8 @@ import type { GameEvent, ObligationKind } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
 import type { Money, PlayerId } from '../../core/types.js'
 import {
-  carryingCostFor, creditInterestDue, prevailingRate, unmortgagedDeedCount,
+  carryingCostFor, creditInterestDue, distressedInterestDue, liquidationQueue,
+  marginShortfall, prevailingRate, unmortgagedDeedCount,
 } from './selectors.js'
 
 /** Era II opens at the round after Era I ends. Spec section 2. */
@@ -81,4 +82,65 @@ export function settleCreditInterest(state: GameState): readonly GameEvent[] {
     capitalise(events, player, state.players[player].cleanCash, amount, 'interest')
   }
   return events
+}
+
+/**
+ * Settlement step 8. Spec 19.7: DISTRESSED_DEBT_RATE per round, COMPOUNDING, floored.
+ * Compounding falls out of applying the rate to the running balance rather than to the
+ * original principal. Never swept from spare clean cash — repayment is the player's
+ * choice during any Open phase, and the compounding is the pressure. Deliberately not
+ * paid to the Treasury or to any player: distressed debt is a scoring penalty (spec
+ * section 5's "you carry a wound that compounds"), not a transfer, so this is the one
+ * place in `credit` where the conservation identity in spec section 20 is not meant to
+ * hold — the accrual is money leaving the system, exactly as the design intends.
+ */
+export function settleDistressedDebt(state: GameState): readonly GameEvent[] {
+  const events: GameEvent[] = []
+  for (const player of state.config.turnOrder) {
+    const amount = distressedInterestDue(state, player)
+    if (amount === 0) continue
+    events.push({ type: 'DistressedDebtAccrued', player, amount })
+  }
+  return events
+}
+
+/**
+ * Settlement step 10, after audits at step 9. A breached position not yet flagged is
+ * flagged now; one already flagged keeps its original round, so the cure clock cannot be
+ * restarted by breaching again; one back inside its base is cured. Liquidation itself
+ * does not happen here — spec 19.8 puts it at the start of the Open phase two rounds on.
+ */
+export function flagMarginCalls(state: GameState): readonly GameEvent[] {
+  const events: GameEvent[] = []
+  for (const player of state.config.turnOrder) {
+    const p = state.players[player]
+    const shortfall = marginShortfall(state, player)
+    if (shortfall > 0 && p.marginCallFlaggedAt === null) {
+      events.push({ type: 'MarginCallFlagged', player, shortfall })
+    } else if (shortfall <= 0 && p.marginCallFlaggedAt !== null) {
+      events.push({ type: 'MarginCallCured', player })
+    }
+  }
+  return events
+}
+
+/**
+ * Spec section 5's second stop condition, and spec 19.8. Liquidation stops when the
+ * position is cured OR when the player has no unmortgaged deeds left; any residual
+ * shortfall becomes distressed debt. Called at the start of the Open phase once the
+ * auction has emptied the queue.
+ *
+ * At LIQUIDATION_FLOOR 0.80 against DEED_ADVANCE_RATE 0.75 each sale narrows the
+ * shortfall, so this path is reached only when the whole portfolio is worth less than
+ * the drawn balance — not, as under a divergent floor at or below the advance rate, on
+ * every liquidation.
+ */
+export function exhaustLiquidation(state: GameState, player: PlayerId): readonly GameEvent[] {
+  const shortfall = marginShortfall(state, player)
+  if (shortfall <= 0) return []
+  if (liquidationQueue(state, player).length > 0) return []
+  return [
+    { type: 'CreditWrittenDown', player, amount: shortfall },
+    { type: 'MarginCallCured', player },
+  ]
 }

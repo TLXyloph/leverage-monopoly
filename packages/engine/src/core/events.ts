@@ -64,6 +64,14 @@ export type GameEvent =
   | { type: 'DeedLiquidated'; player: PlayerId; deed: DeedId; buyer: PlayerId | 'bank'; price: Money }
   | { type: 'DistressedDebtIncurred'; player: PlayerId; amount: Money }
   | { type: 'DistressedDebtAccrued'; player: PlayerId; amount: Money }
+  | { type: 'DistressedDebtRepaid'; player: PlayerId; amount: Money }
+  /** Drawn credit that liquidation could not clear, converted to distressed debt. */
+  | { type: 'CreditWrittenDown'; player: PlayerId; amount: Money }
+  /** Spec section 5. Colour group stripped to bare land before a lot is auctioned. */
+  | { type: 'BuildingsStripped'; player: PlayerId; deeds: readonly DeedId[]; proceeds: Money }
+  /** Spec 19.12. Liquidation cancels the contract and the debtor owes the holder. */
+  | { type: 'EncumbranceExtinguished'; player: PlayerId; deed: DeedId; contract: ContractId
+      kind: 'rent-future' | 'deed-option'; holder: PlayerId; amount: Money }
 
   // --- peer loans ---
   | { type: 'PeerLoanOriginated'; id: ContractId; lender: PlayerId; borrower: PlayerId

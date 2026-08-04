@@ -1,7 +1,7 @@
 import { ECONOMY } from '../../config/economy.js'
 import { floorPercent } from '../../core/money.js'
-import type { DeedState, GameState, PeerLoan } from '../../core/state.js'
-import type { ContractId, Money, PlayerId } from '../../core/types.js'
+import type { DeedState, GameState, PeerLoan, PlayerState } from '../../core/state.js'
+import type { ColorGroup, ContractId, DeedId, Money, PlayerId, RoundNumber } from '../../core/types.js'
 
 export function deedsOwnedBy(state: GameState, player: PlayerId): readonly DeedState[] {
   return Object.values(state.deeds).filter((d) => d.owner === player)
@@ -92,4 +92,124 @@ export function creditInterestDue(state: GameState, player: PlayerId): Money {
  * `securitization` (Task 16) needs the exact signature from `contexts/credit/index.ts`. */
 export function findPeerLoan(state: GameState, id: ContractId): PeerLoan | undefined {
   return state.loans.find((l) => l.id === id)
+}
+
+/**
+ * Task 10. drawnCredit - borrowingBase, SIGNED like `creditHeadroom` (its exact
+ * negation) — a margin call is a positive shortfall, spec section 5. Deliberately
+ * excludes `distressedDebt`: distressed debt sits outside both the drawn balance and
+ * the borrowing base (spec 19.8), so it can never itself trigger a breach.
+ */
+export function marginShortfall(state: GameState, player: PlayerId): Money {
+  return drawnCredit(state, player) - borrowingBase(state, player)
+}
+
+/** True while the player's drawn balance exceeds their borrowing base. */
+export function isUnderMarginCall(state: GameState, player: PlayerId): boolean {
+  return marginShortfall(state, player) > 0
+}
+
+/**
+ * Spec section 5. Floor price in a forced sale: LIQUIDATION_FLOOR (80%) of face value,
+ * floored. Pure over the deed record itself — no state needed — because the floor is a
+ * fixed fraction of face, not of anything that changes turn to turn.
+ */
+export function liquidationPrice(deed: DeedState): Money {
+  return floorPercent(deed.faceValue, ECONOMY.LIQUIDATION_FLOOR)
+}
+
+/**
+ * Spec section 5: deeds are offered "in descending face-value order," mortgaged deeds
+ * excluded (a mortgaged deed carries no equity to seize and cannot be auctioned).
+ * Ties break on deed id so the order is deterministic regardless of `Object.values`
+ * iteration, which is otherwise just object insertion order.
+ */
+export function liquidationQueue(state: GameState, player: PlayerId): readonly DeedId[] {
+  return deedsOwnedBy(state, player)
+    .filter((d) => !d.mortgaged)
+    .slice()
+    .sort((a, b) => b.faceValue - a.faceValue || a.id.localeCompare(b.id))
+    .map((d) => d.id)
+}
+
+/**
+ * Spec 19.1 / 19.8: a margin call flagged at Settlement step 10 of round N gives the
+ * player through the end of the Open phase of round N+1 to cure, and force-liquidates
+ * at the start of the Open phase of round N+2 if still breached. Null if the player
+ * carries no flag at all.
+ */
+export function liquidationRound(state: GameState, player: PlayerId): RoundNumber | null {
+  const flaggedAt = state.players[player].marginCallFlaggedAt
+  return flaggedAt === null ? null : flaggedAt + 2
+}
+
+/**
+ * Players whose cure window has fully elapsed — flagged, and the game has reached (or
+ * passed) their liquidation round. `decideCredit`'s `SettleLiquidationLot` case is only
+ * ever valid for a player in this set (spec 19.8: liquidation applies only to uncured
+ * margin calls).
+ */
+export function playersAwaitingLiquidation(state: GameState): readonly PlayerId[] {
+  return state.config.turnOrder.filter((player) => {
+    const round = liquidationRound(state, player)
+    return round !== null && state.round >= round
+  })
+}
+
+/** Settlement step 8's per-round charge. Spec 19.7: DISTRESSED_DEBT_RATE, floored. */
+export function distressedInterestDue(state: GameState, player: PlayerId): Money {
+  return floorPercent(state.players[player].distressedDebt, ECONOMY.DISTRESSED_DEBT_RATE)
+}
+
+/**
+ * Spec section 5. Every deed the player owns in `group`, still carrying houses, sold
+ * back to the bank at BUILDING_SELLBACK_RATE of cost. All of them strip to bare land in
+ * the same event, which trivially satisfies the even-build rule (there is no unevenness
+ * once every deed in the group reads zero). Deliberately restricted to the *player's*
+ * deeds in the group — a colour group split across owners only strips the liquidated
+ * player's own buildings.
+ *
+ * BUILDING_SELLBACK_RATE equals BUILDING_ADVANCE_RATE exactly (both 0.5), and this sums
+ * the same `houses * houseCost` term `borrowingBase` sums for its building component
+ * before flooring once — so the proceeds here exactly equal the amount stripping this
+ * building value removes from the borrowing base. That equality is the shortfall
+ * neutrality invariant; it depends on computing the sum first and flooring once, exactly
+ * as `borrowingBase` does.
+ */
+export function groupBuildingStrip(
+  state: GameState,
+  player: PlayerId,
+  group: ColorGroup,
+): { readonly deeds: readonly DeedId[]; readonly proceeds: Money } {
+  const held = deedsOwnedBy(state, player).filter(
+    (d) => d.group === group && !d.mortgaged && d.houses > 0,
+  )
+  const buildingValue = held.reduce((sum, d) => sum + d.houses * d.houseCost, 0)
+  return {
+    deeds: held.map((d) => d.id),
+    proceeds: floorPercent(buildingValue, ECONOMY.BUILDING_SELLBACK_RATE),
+  }
+}
+
+function withPlayer(state: GameState, id: PlayerId, patch: Partial<PlayerState>): GameState {
+  return { ...state, players: { ...state.players, [id]: { ...state.players[id], ...patch } } }
+}
+
+/**
+ * Applies a cash inflow against a player's position: first paying down drawn credit,
+ * then landing any excess on clean cash. Used by liquidation (a stripped building's
+ * proceeds, a lot's sale price) to route money against the debt before it becomes spare
+ * cash. Raises `sum(cleanCash) - sum(drawnCredit)` by exactly `amount` regardless of the
+ * split between the two branches — the caller is responsible for debiting the matching
+ * source (a buyer's cash, or the Treasury for a bank purchase) so the conservation
+ * identity in spec section 20 balances.
+ */
+export function applyAgainstDebt(state: GameState, player: PlayerId, amount: Money): GameState {
+  const p = state.players[player]
+  const toDebt = Math.min(amount, p.drawnCredit)
+  const toCash = amount - toDebt
+  return withPlayer(state, player, {
+    drawnCredit: p.drawnCredit - toDebt,
+    cleanCash: p.cleanCash + toCash,
+  })
 }

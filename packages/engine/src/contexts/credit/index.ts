@@ -4,8 +4,11 @@ export { reduceCredit } from './reduce.js'
 export {
   STIMULUS_ROUND,
   advanceEraIIStimulus,
+  exhaustLiquidation,
+  flagMarginCalls,
   settleCarryingCost,
   settleCreditInterest,
+  settleDistressedDebt,
 } from './settlement.js'
 export {
   borrowingBase,
@@ -15,6 +18,11 @@ export {
   deedsOwnedBy,
   drawnCredit,
   findPeerLoan,
+  groupBuildingStrip,
+  liquidationPrice,
+  liquidationQueue,
+  liquidationRound,
+  playersAwaitingLiquidation,
   swapCollateralPosted,
   unmortgagedDeedCount,
 } from './selectors.js'
