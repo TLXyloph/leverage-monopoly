@@ -139,6 +139,21 @@ export const ECONOMY = {
    * Era IV deliberately unlocks nothing — the last six rounds are about
    * surviving existing leverage, not learning a new instrument.
    */
+  /**
+   * Loan note mark, spec section 12:
+   *   principal x (1 - LOAN_NOTE_HAIRCUT_PER_TURN x min(leverage, LOAN_NOTE_MAX_LEVERAGE))
+   * A note against an unlevered borrower marks at par; against a borrower at 4x or
+   * worse it marks at 40% of principal.
+   */
+  LOAN_NOTE_HAIRCUT_PER_TURN: 0.15,
+  /** Deliberately below RATING_MAX_LEVERAGE (5): spec section 8 caps leverage at 5
+   * inside the ratings formula and spec section 12 caps it at 4 inside the note mark.
+   * Two rules, two caps, two constants — not a typo. */
+  LOAN_NOTE_MAX_LEVERAGE: 4,
+
+  /** Spec section 10: dirty cash is worth exactly this at final scoring. */
+  DIRTY_CASH_SCORING_VALUE: 0,
+
   UNLOCK_ERA: {
     trade: 1,
     building: 1,
