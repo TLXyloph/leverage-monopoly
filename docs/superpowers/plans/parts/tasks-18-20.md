@@ -2,8 +2,9 @@
 
 Final part of the LEVERAGE rules engine plan. Task 18 builds the `decks` context — a
 declarative card-effect vocabulary plus the 80 authored cards. Task 19 builds scoring,
-mark-to-model and win conditions in `session`. Task 20 builds the fast-check invariant
-suite, which is the strongest correctness guarantee in the project.
+mark-to-model, win conditions and spec 19.1's Settlement sequence in `session`. Task 20
+builds the fast-check invariant suite, which is the strongest correctness guarantee in
+the project.
 
 These three tasks depend on every other context. **Every cross-context call goes through
 `contexts/<name>/index.ts`.** Signatures consumed from sibling parts (`tasks-03-08.md`,
@@ -3017,7 +3018,7 @@ export function settleCreditInterest(state: GameState): readonly GameEvent[]
 export function settleDistressedDebt(state: GameState): readonly GameEvent[]
 export function flagMarginCalls(state: GameState): readonly GameEvent[]
 
-// contexts/credit/index.ts  (Task 11, ABSENT from the plan set — see JUDGMENT CALLS)
+// contexts/credit/index.ts  (tasks-09-11.md, Task 11) — Settlement step 5
 export function settlePeerLoans(state: GameState): readonly GameEvent[]
 export function activeLoans(state: GameState): readonly PeerLoan[]
 
@@ -4296,7 +4297,7 @@ describe('runFinalSettlement', () => {
     })
     vi.mocked(terminateAllPools).mockReturnValue([
       { type: 'SwapTriggered', id: 's-1', payout: 400 },
-      { type: 'ObligationCapitalised', player: 'P4', amount: 300, obligation: 'cds-premium' },
+      { type: 'ObligationCapitalised', player: 'P4', amount: 300, obligation: 'swap-payout' },
     ])
     const out = runFinalSettlement(base, NO_INPUT) as readonly GameEvent[]
     const scored = out.find((e) => e.type === 'GameScored')
@@ -4437,14 +4438,19 @@ Two tricks make the acceptance rate high enough to be useful:
 - Create: `packages/engine/tests/property/replay.test.ts`
 - Create: `packages/engine/tests/property/waterfall.test.ts`
 - Create: `packages/engine/tests/property/invariants.test.ts`
+- Create: `packages/engine/tests/property/deeds.test.ts`
 - Create: `packages/engine/tests/property/coverage.test.ts`
+- Create: `packages/engine/tests/property/dispatch.ts`
+- Create: `packages/engine/tests/property/setup.ts`
 - Modify: `packages/engine/src/config/economy.ts` (imports the assertions)
 - Modify: `.eslintrc.json` (bans the raw percentage pattern)
 
-**File-size plan.** `arbitraries.ts` is ~210 lines of generators, `driver.ts` ~180 lines
-of command dispatch and round loop, `ledger.ts` ~150 lines dominated by the exhaustive
-delta table. The six test files are 60-140 lines each. The split is by role — generate,
-run, measure, assert — so a new invariant adds a test file and touches nothing else.
+**File-size plan.** `arbitraries.ts` is ~210 lines of generators, `dispatch.ts` ~230 lines
+turning one scripted action into one decider call, `driver.ts` ~180 lines of the round
+loop, `ledger.ts` ~150 lines dominated by the exhaustive delta table, `setup.ts` a dozen
+lines pinning the run budget. The seven test files are 60-140 lines each. The split is by
+role — generate, dispatch, run, measure, assert — so a new invariant adds a test file and
+touches nothing else, and a new command arm touches only `dispatch.ts`.
 
 **Interfaces:**
 
@@ -4512,23 +4518,60 @@ Produces:
 export function assertEconomyInvariants(): void
 
 // tests/property/arbitraries.ts
-export type ScriptedAction = /* 15-arm union, below */
-export interface ScriptedRound { readonly actions; readonly rolls; readonly auditDice }
-export interface GameScript { readonly config; readonly shuffles; readonly rounds }
+/** An index resolved modulo a live list, so it is always in range. */
+export type Slot = number
+/** A fraction of a live balance, in [0, 1.2]. The tail above 1 is deliberate. */
+export type Percent = number
+export type ScriptedAction = /* 19-arm union, Step 9 */
+export interface ScriptedDraftRound { readonly offsets: readonly Slot[]
+  readonly bidPercents: readonly Percent[] }
+export interface ScriptedRound { readonly actions: readonly ScriptedAction[]
+  readonly rolls: readonly DiceRoll[]
+  readonly auditDice: Readonly<Partial<Record<PlayerId, DiceRoll>>>
+  readonly drawCard: boolean }
+export interface GameScript { readonly config: GameConfig
+  readonly shuffles: Readonly<Record<Era, readonly number[]>>
+  readonly draft: readonly ScriptedDraftRound[]
+  readonly rounds: readonly ScriptedRound[] }
 export const arbDice: fc.Arbitrary<DiceRoll>
 export const arbDiceBiased: fc.Arbitrary<DiceRoll>
 export const arbConfig: fc.Arbitrary<GameConfig>
 export const arbAction: fc.Arbitrary<ScriptedAction>
+export const arbDraftRound: fc.Arbitrary<ScriptedDraftRound>
 export const arbRound: fc.Arbitrary<ScriptedRound>
 export function arbGameScript(maxRounds: number): fc.Arbitrary<GameScript>
+
+// tests/property/dispatch.ts — slot resolvers plus the one action-to-command switch
+export type Outcome = readonly GameEvent[] | Rejection | null
+export function at<T>(items: readonly T[], index: Slot): T | null
+export function actorAt(state: GameState, index: Slot): PlayerId
+export function otherThan(state: GameState, self: PlayerId, index: Slot): PlayerId | null
+export function amount(balance: Money, pct: Percent): Money
+export function deedsOf(state: GameState, player: PlayerId): readonly DeedId[]
+export function loansOf(
+  state: GameState, player: PlayerId, side: 'lender' | 'borrower',
+): readonly ContractId[]
+export function futuresOf(state: GameState, player: PlayerId): readonly ContractId[]
+export function optionsOf(state: GameState, player: PlayerId): readonly ContractId[]
+export function poolableAssets(state: GameState, player: PlayerId): readonly PoolAssetRef[]
+export function swapReferences(state: GameState): readonly SwapReference[]
+export function scriptedId(
+  prefix: string, state: GameState, actor: PlayerId, n: number,
+): ContractId
+export function dispatch(state: GameState, action: ScriptedAction, seq: number): Outcome
 
 // tests/property/driver.ts
 export interface Batch { readonly label: string; readonly events: readonly GameEvent[] }
 export interface Trace {
+  /** `before[i]` is the state in which `batches[i]` was decided. */
   readonly before: readonly GameState[]
   readonly batches: readonly Batch[]
   readonly events: readonly GameEvent[]
   readonly final: GameState
+  /** Acceptance telemetry. `coverage.test.ts` asserts floors on these. */
+  readonly accepted: number
+  readonly rejected: number
+  readonly skipped: number
 }
 export function runScript(script: GameScript): Trace
 
@@ -4537,6 +4580,13 @@ export function conservedTotal(state: GameState): Money
 export function expectedDelta(events: readonly GameEvent[]): Money
 export const BANK_CROSSING_EVENTS: readonly EventType[]
 ```
+
+`dispatch` returns `null` — distinct from a `Rejection` — when the generated action names
+a slot that does not exist, e.g. a peer loan for a player holding none. The driver counts
+those as *skipped* rather than *rejected*, because a skip means the generator produced
+nothing for the engine to judge, while a rejection means the engine judged and refused.
+Step 14's coverage test asserts a floor on the accepted share and a ceiling on the skipped
+share, which is what stops the suite from silently degrading into vacuous passes.
 
 ---
 
@@ -5093,6 +5143,53 @@ export function arbGameScript(maxRounds: number): fc.Arbitrary<GameScript> {
 Note `bidPercents` starts at 90, below the 100% face floor. That tail exists so
 `BID_BELOW_FACE` is exercised, and the driver discards the rejection — a player simply
 misses that draft round, which is a legal outcome and produces uneven portfolios.
+
+**What this generator reaches.** Four players in every turn order, both unlock modes, both
+win conditions, 1 to 24 rounds and therefore all four eras — `unlockMode: 'all'` is
+generated specifically so short scripts can still reach Era III instruments. Dice with
+doubles biased up from one-in-six to one-in-three, so extra rolls and the
+three-consecutive-doubles jail path are hit inside a short script. Card draws against a
+generated permutation of the real 80 authored cards, so Task 18's interpreter runs against
+generated state rather than fixtures. Credit drawn and repaid on both sides of the
+headroom limit. Peer loans originated, serviced, repaid, sold and defaulted, including the
+permanent base halving. Rent futures and deed options written, resold, exercised, expired
+and made whole. Ventures, speakeasy, laundering, bribery, insider trading, heat accrual
+and audits from round 13. Pools, tranches sold, waterfalls run, CDS written and triggered
+— including the round-24 termination sweep. Carrying cost, interest, distressed-debt
+compounding and the obligation waterfall underneath all of them. Margin calls, forced
+liquidation and the distressed-debt terminal state.
+
+**What it deliberately does not reach, and why each was excluded:**
+
+- **Development — building, selling buildings, mortgaging, unmortgaging, trading.** Not a
+  choice about test design: no task in the plan set writes a decider *or* a reducer for
+  `HouseBuilt`, `HouseSold`, `DeedMortgaged`, `DeedUnmortgaged` or `DeedTraded`, so there
+  is nothing to call. This is the largest gap in the plan and it is recorded again under
+  *Contradictions between sibling task files* below. Margin calls are still reached
+  without it — obligation capitalisation, CDS collateral, the peer-default halving and the
+  Era IV `margin-flag` cards all push a drawn balance past its base — but **no property
+  here constrains the even-build rule, the house supply, or mortgage economics.**
+- **Ranked-triple draft collisions.** The draft is scripted as offsets into the available
+  list rather than as generated triples. Generated triples collide on the first pick about
+  half the time and the cascade rules then dominate the search space, so the generator
+  would spend its whole budget re-testing Task 8, which already tests it exhaustively.
+- **Individual card effects.** The generator draws real cards but asserts nothing about
+  what any one of them does; Task 18 has a test per card. Task 20 asserts only that no
+  card can break an invariant.
+- **The Markov landing model and the 1.19 doubles factor.** Statistical claims needing a
+  convergence test with a tolerance, not a universally quantified predicate. Task 7 pins
+  them against the golden fixture.
+- **Hand-written illegal event logs.** `replay` is not a validator — `decide` is the
+  boundary, with Zod at the server edge behind it. Asserting that `replay` rejects an
+  impossible log would test a guarantee the architecture does not make.
+- **Balance and win rates.** Nothing here asserts that a strategy wins x% of the time.
+  That is what the Monte Carlo study behind spec section 20 is for.
+
+The first two exclusions are the ones that matter, because both hide real rules. Step 14's
+`coverage.test.ts` exists so the list cannot quietly grow: it asserts a floor on the share
+of generated actions the engine accepts and on the set of event types the suite reaches,
+so a refactor that starts rejecting every swap turns six property files from passing into
+failing rather than from meaningful into vacuous.
 
 - [ ] **Step 11: Write the slot resolvers in `dispatch.ts`**
 
