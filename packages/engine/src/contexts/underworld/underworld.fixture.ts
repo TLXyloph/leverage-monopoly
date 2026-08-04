@@ -90,6 +90,7 @@ export function makeState(over: Partial<GameState> = {}): GameState {
         launderCountThisGame: Object.fromEntries(PLAYER_IDS.map((p) => [p, 0])) as Record<PlayerId, number>,
       },
     },
+    finalScores: null,
     ...over,
   }
 }

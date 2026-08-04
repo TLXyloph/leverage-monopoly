@@ -165,4 +165,13 @@ export interface GameState {
   readonly swaps: readonly Swap[]
   readonly decks: Readonly<Record<Era, DeckState>>
   readonly cardEffects: CardEffectsState
+  /**
+   * Every player's net worth at the moment `GameScored` was emitted, or null while the
+   * game is still running. `GameScored` had no reducer case anywhere, so `replay(events)`
+   * reconstructed a finished game that still looked unfinished — the recorded result was
+   * in the log and nowhere in the state. Stored rather than recomputed because scoring
+   * marks contracts to model against the state AT termination; recomputing later would
+   * silently re-value them.
+   */
+  readonly finalScores: Readonly<Record<PlayerId, Money>> | null
 }

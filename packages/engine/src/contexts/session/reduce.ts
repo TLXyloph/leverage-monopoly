@@ -89,6 +89,7 @@ export function initialState(config: GameConfig): GameState {
     swaps: [],
     decks: { 1: EMPTY_DECK, 2: EMPTY_DECK, 3: EMPTY_DECK, 4: EMPTY_DECK },
     cardEffects: emptyCardEffectsFor(PLAYER_IDS),
+    finalScores: null,
   }
 }
 
@@ -102,6 +103,14 @@ export function reduceSession(state: GameState, event: GameEvent): GameState {
       return { ...state, round: event.round }
     case 'EraAdvanced':
       return { ...state, era: event.era }
+    /**
+     * The final result, recorded into state. Without this case `replay(events)` rebuilt
+     * a scored game carrying no winner: `scoreGame` emitted the net worths, the log kept
+     * them, and nothing ever read them back. `session/scoring.ts`'s `standings`/`winner`
+     * rank a LIVE state; this is the frozen result those two agreed on at termination.
+     */
+    case 'GameScored':
+      return { ...state, finalScores: event.netWorths }
     default:
       return state
   }

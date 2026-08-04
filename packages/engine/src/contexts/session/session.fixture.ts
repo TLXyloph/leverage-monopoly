@@ -101,6 +101,7 @@ export function scoringState(patch: Partial<GameState> = {}): GameState {
     swaps: [],
     decks: { 1: EMPTY_DECK, 2: EMPTY_DECK, 3: EMPTY_DECK, 4: EMPTY_DECK },
     cardEffects: EMPTY_CARD_EFFECTS,
+    finalScores: null,
     ...patch,
   }
 }
