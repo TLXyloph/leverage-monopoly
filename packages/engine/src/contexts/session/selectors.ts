@@ -1,32 +1,14 @@
 import { ECONOMY } from '../../config/economy.js'
 import type { GameState } from '../../core/state.js'
-import type { Era, RoundNumber } from '../../core/types.js'
+import type { Era, Instrument, RoundNumber } from '../../core/types.js'
 
-/** Every player-facing capability that era gating can withhold. */
-export type Instrument =
-  | 'trade' | 'building' | 'mortgage' | 'credit-line'
-  | 'peer-loan' | 'rent-future' | 'venture' | 'laundering' | 'bribery'
-  | 'cdo' | 'cds' | 'deed-option' | 'insider-trading'
+export type { Instrument }
 
 /**
- * Spec section 2. Era IV deliberately unlocks nothing: the last six rounds are
- * about surviving existing leverage, not learning a new instrument.
+ * Spec section 2. Sourced from `ECONOMY.UNLOCK_ERA` — the single source of
+ * truth for unlock eras — and re-exported here as session's public API.
  */
-export const UNLOCK_ERA: Readonly<Record<Instrument, Era>> = {
-  trade: 1,
-  building: 1,
-  mortgage: 1,
-  'credit-line': 1,
-  'peer-loan': 2,
-  'rent-future': 2,
-  venture: 2,
-  laundering: 2,
-  bribery: 2,
-  cdo: 3,
-  cds: 3,
-  'deed-option': 3,
-  'insider-trading': 3,
-}
+export const UNLOCK_ERA: Readonly<Record<Instrument, Era>> = ECONOMY.UNLOCK_ERA
 
 export const INSTRUMENTS: readonly Instrument[] =
   Object.keys(UNLOCK_ERA) as readonly Instrument[]

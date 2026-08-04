@@ -5,7 +5,7 @@ import type { Phase } from '../../core/types.js'
 import { reject, type Rejection } from '../../core/errors.js'
 import { eraForRound } from './selectors.js'
 
-export type SessionCommand = { readonly kind: 'advance-phase' }
+export type SessionCommand = { readonly type: 'advance-phase' }
 
 /** Bootstraps a game. Emitted before any state exists, so it takes no state. */
 export function createGame(config: GameConfig): readonly GameEvent[] {
@@ -25,7 +25,7 @@ export function decideSession(
   state: GameState,
   command: SessionCommand,
 ): readonly GameEvent[] | Rejection {
-  if (command.kind !== 'advance-phase') {
+  if (command.type !== 'advance-phase') {
     return reject('WRONG_PHASE', 'Unknown session command.')
   }
   if (state.phase === 'complete') {

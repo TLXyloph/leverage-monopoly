@@ -17,7 +17,7 @@ const CONFIG: GameConfig = {
 }
 
 function events(state: GameState): readonly GameEvent[] {
-  const result = decideSession(state, { kind: 'advance-phase' })
+  const result = decideSession(state, { type: 'advance-phase' })
   if (isRejection(result)) throw new Error(result.message)
   return result
 }
@@ -132,7 +132,7 @@ describe('phase and round advancement', () => {
       phase: 'draft',
       draft: { round: 3, submissions: [], complete: false },
     }
-    const result = decideSession(state, { kind: 'advance-phase' })
+    const result = decideSession(state, { type: 'advance-phase' })
     expect(isRejection(result) && result.code).toBe('WRONG_PHASE')
   })
 
@@ -141,7 +141,7 @@ describe('phase and round advancement', () => {
       ...replay([{ type: 'GameCreated', config: CONFIG }]),
       phase: 'complete',
     }
-    expect(isRejection(decideSession(state, { kind: 'advance-phase' }))).toBe(true)
+    expect(isRejection(decideSession(state, { type: 'advance-phase' }))).toBe(true)
   })
 })
 

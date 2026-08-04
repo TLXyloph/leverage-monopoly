@@ -1,4 +1,4 @@
-import type { Era, Money } from '../core/types.js'
+import type { Era, Instrument, Money } from '../core/types.js'
 
 export const ECONOMY = {
   /** Single unified budget. The draft spends from it. Spec section 4. */
@@ -100,11 +100,28 @@ export const ECONOMY = {
   LAUNDER_HEAT: 1,
   HEAT_DECAY: 1,
 
-  /** Instrument gating, ignored when config.unlockMode is 'all'. */
-  VENTURES_UNLOCK_ERA: 2 as Era,
-  LAUNDERING_UNLOCK_ERA: 2 as Era,
-  BRIBERY_UNLOCK_ERA: 2 as Era,
-  INSIDER_TRADING_UNLOCK_ERA: 3 as Era,
+  /**
+   * Instrument gating, ignored when config.unlockMode is 'all'. Single source
+   * of truth: the session context reads this rather than keeping its own
+   * copy, so a new instrument or a retuned unlock era only needs one edit.
+   * Era IV deliberately unlocks nothing — the last six rounds are about
+   * surviving existing leverage, not learning a new instrument.
+   */
+  UNLOCK_ERA: {
+    trade: 1,
+    building: 1,
+    mortgage: 1,
+    'credit-line': 1,
+    'peer-loan': 2,
+    'rent-future': 2,
+    venture: 2,
+    laundering: 2,
+    bribery: 2,
+    cdo: 3,
+    cds: 3,
+    'deed-option': 3,
+    'insider-trading': 3,
+  } as Readonly<Record<Instrument, Era>>,
 } as const
 
 type RoundNumberLiteral = number

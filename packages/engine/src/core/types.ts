@@ -34,3 +34,9 @@ export type ColorGroup =
 export type DiceRoll = readonly [number, number]
 
 export type ContractId = string
+
+/** Every player-facing capability that era gating can withhold. */
+export type Instrument =
+  | 'trade' | 'building' | 'mortgage' | 'credit-line'
+  | 'peer-loan' | 'rent-future' | 'venture' | 'laundering' | 'bribery'
+  | 'cdo' | 'cds' | 'deed-option' | 'insider-trading'
