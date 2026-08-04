@@ -51,6 +51,42 @@
           {
             "selector": "ImportExpression",
             "message": "The engine performs no I/O. Dynamic imports of Node.js modules are forbidden."
+          },
+          {
+            "selector": "CallExpression[callee.object.name='Math'][callee.property.name='floor'] > BinaryExpression[operator='*']",
+            "message": "Use floorPercent/ceilPercent from core/money.ts. Math.floor(a * b) is inexact: 180 * 0.7 is 125.99999999999999."
+          },
+          {
+            "selector": "CallExpression[callee.object.name='Math'][callee.property.name='ceil'] > BinaryExpression[operator='*']",
+            "message": "Use floorPercent/ceilPercent from core/money.ts. Math.ceil(a * b) is inexact: 180 * 0.7 is 125.99999999999999."
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/engine/src/core/money.ts"],
+      "rules": {
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "MemberExpression[object.name='globalThis'][property.name='Date']",
+            "message": "The engine must be deterministic. Time enters as event data. Use Date through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.name='window'][property.name='Date']",
+            "message": "The engine must be deterministic. Time enters as event data. Use Date through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.object.name='globalThis'][object.property.name='Math'][property.name='random']",
+            "message": "The engine must be deterministic. Randomness enters as event data. Use Math.random through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.object.name='window'][object.property.name='Math'][property.name='random']",
+            "message": "The engine must be deterministic. Randomness enters as event data. Use Math.random through a dependency injection or event parameter."
+          },
+          {
+            "selector": "ImportExpression",
+            "message": "The engine performs no I/O. Dynamic imports of Node.js modules are forbidden."
           }
         ]
       }
