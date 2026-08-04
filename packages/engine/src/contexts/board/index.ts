@@ -1,6 +1,6 @@
 export * from './selectors.js'
 export { reduceBoard, transfer } from './reduce.js'
-export { decideBoard, type BoardCommand } from './decide.js'
+export { decideBoard, type BoardCommand, type BoardPorts } from './decide.js'
 export * from './rent.js'
 export * from './markov.js'
 export * from './property.js'

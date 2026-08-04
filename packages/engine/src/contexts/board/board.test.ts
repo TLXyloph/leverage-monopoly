@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { decideBoard, destination, isDoubles, passesGo } from './index.js'
+import { destination, isDoubles, passesGo } from './index.js'
+import { decideBoardAction } from '../../core/decide.js'
 import { initialState } from '../session/index.js'
 import { reduce } from '../../core/reduce.js'
 import { isRejection } from '../../core/errors.js'
@@ -24,7 +25,7 @@ function movementState(overrides: Partial<GameState['players']['P1']> = {}): Gam
 }
 
 function roll(state: GameState, dice: DiceRoll, player: PlayerId = 'P1'): readonly GameEvent[] {
-  const result = decideBoard(state, { type: 'roll-dice', player, dice })
+  const result = decideBoardAction(state, { type: 'roll-dice', player, dice })
   if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
   return result
 }
@@ -180,12 +181,12 @@ describe('jail', () => {
 describe('validation', () => {
   it('refuses a roll outside the movement phase', () => {
     const state = { ...movementState(), phase: 'open' as const }
-    const result = decideBoard(state, { type: 'roll-dice', player: 'P1', dice: [1, 1] })
+    const result = decideBoardAction(state, { type: 'roll-dice', player: 'P1', dice: [1, 1] })
     expect(isRejection(result) && result.code).toBe('WRONG_PHASE')
   })
 
   it('refuses dice outside 1-6', () => {
-    const result = decideBoard(movementState(), {
+    const result = decideBoardAction(movementState(), {
       type: 'roll-dice', player: 'P1', dice: [0, 7],
     })
     expect(isRejection(result) && result.code).toBe('INVALID_DICE')

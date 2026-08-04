@@ -2,6 +2,7 @@ import {
   GO_TO_JAIL_SQUARE, INCOME_TAX_SQUARE, LUXURY_TAX_SQUARE, deedAt,
 } from '../../config/board.js'
 import { ECONOMY } from '../../config/economy.js'
+import { goSalaryAddend } from '../../core/card-effects.js'
 import { reject, type Rejection } from '../../core/errors.js'
 import type { GameEvent, ObligationKind } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
@@ -15,6 +16,26 @@ export type BoardCommand = {
   readonly type: 'roll-dice'
   readonly player: PlayerId
   readonly dice: DiceRoll
+}
+
+/**
+ * Spec 19.5. Escort Service and Chop Shop pay the DEED'S OWNER on every rent CHARGED on
+ * a deed they own, so `board` must hand each `RentCharged` it emits to `underworld`.
+ *
+ * Injected rather than imported for the usual reason: `underworld/decide.ts` reads
+ * `session`'s `isUnlocked`, `session/settlement.ts` reads `markets`, and
+ * `markets/selectors.ts` reads `board` — so `board -> underworld` closes a four-hop
+ * cycle. `PropertyPorts` (below, same file) and `CreditPorts` use the same device.
+ *
+ * DELIBERATELY REQUIRED, with no `NO_VENTURES` default. A defaulted port that returns
+ * `[]` is indistinguishable from a correctly wired one that found no ventures, and that
+ * is exactly how this function sat uncalled through a full task review: the failure is
+ * silent and total. Making it required means a caller that forgets it does not compile.
+ */
+export interface BoardPorts {
+  readonly ventureIncomeFromRent: (
+    state: GameState, rent: Extract<GameEvent, { type: 'RentCharged' }>,
+  ) => readonly GameEvent[]
 }
 
 /**
@@ -43,6 +64,7 @@ class TurnLedger {
 export function decideBoard(
   state: GameState,
   command: BoardCommand,
+  ports: BoardPorts,
 ): readonly GameEvent[] | Rejection {
   if (command.type !== 'roll-dice') {
     return reject('WRONG_PHASE', 'Unknown board command.')
@@ -75,10 +97,13 @@ export function decideBoard(
   const passed = passesGo(from, total)
   events.push({ type: 'TokenMoved', player, from, to, passedGo: passed })
   if (passed) {
-    events.push({ type: 'SalaryPaid', player, amount: ECONOMY.GO_SALARY })
-    ledger.credit(ECONOMY.GO_SALARY)
+    // era-decks 6.2: a `go-salary-addend` modifier tops up the salary for the players
+    // it names. Additive and card-authored in whole dollars, so nothing rounds.
+    const salary = ECONOMY.GO_SALARY + goSalaryAddend(state, player)
+    events.push({ type: 'SalaryPaid', player, amount: salary })
+    ledger.credit(salary)
   }
-  events.push(...resolveLanding(state, player, to, dice, ledger))
+  events.push(...resolveLanding(state, player, to, dice, ledger, ports))
   return events
 }
 
@@ -104,6 +129,7 @@ function resolveLanding(
   square: SquareIndex,
   dice: DiceRoll,
   ledger: TurnLedger,
+  ports: BoardPorts,
 ): readonly GameEvent[] {
   const events: GameEvent[] = []
   if (square === GO_TO_JAIL_SQUARE) {
@@ -133,7 +159,10 @@ function resolveLanding(
   // Spec 19.2: a futures holder landing on a deed they do not own pays nobody.
   if (recipient === null || recipient === player) return events
 
-  events.push({ type: 'RentCharged', from: player, to: recipient, deed: definition.id, amount })
+  const charged: GameEvent = {
+    type: 'RentCharged', from: player, to: recipient, deed: definition.id, amount,
+  }
+  events.push(charged)
   const contract = activeFutureOn(state, definition.id)
   if (contract !== null) {
     events.push({
@@ -141,5 +170,16 @@ function resolveLanding(
     })
   }
   capitalise(events, player, ledger.charge(amount), 'rent')
+  /**
+   * Spec 19.5. The venture kicker is computed on the rent CHARGED and paid to the
+   * DEED'S OWNER, which is why it is handed the event rather than the recipient: a live
+   * rent future moves `charged.to` to the futures holder, but `ventureIncomeFromRent`
+   * reads `state.deeds[deed].owner` and pays the owner regardless. Selling a future
+   * therefore does not extinguish venture income, and a futures holder earns nothing
+   * from a deed they do not own. Emitted last so the rent leg is fully resolved first;
+   * the dirty cash it mints has no payer (spec section 10) and so cannot interact with
+   * the payer's shortfall above.
+   */
+  events.push(...ports.ventureIncomeFromRent(state, charged))
   return events
 }

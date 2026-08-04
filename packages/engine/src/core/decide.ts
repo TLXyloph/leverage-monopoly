@@ -1,17 +1,36 @@
-import type { PropertyPorts } from '../contexts/board/index.js'
-import { decideProperty, type PropertyCommand } from '../contexts/board/index.js'
+import type { BoardCommand, BoardPorts, PropertyPorts } from '../contexts/board/index.js'
+import { decideBoard, decideProperty, type PropertyCommand } from '../contexts/board/index.js'
 import type { CreditCommand, CreditPorts } from '../contexts/credit/index.js'
 import { decideCredit } from '../contexts/credit/index.js'
 import {
   assertDeedTransferable, deedOptionRefund, makeWholeOnMortgage, rentFutureMakeWhole,
 } from '../contexts/markets/index.js'
 import { decideSession, type SessionCommand } from '../contexts/session/index.js'
+import { ventureIncomeFromRent } from '../contexts/underworld/index.js'
 import type { Rejection } from './errors.js'
 import type { GameEvent } from './events.js'
 import type { GameState } from './state.js'
 
 /** The live wiring. Task 20's driver must dispatch through this, not through the default. */
 export const MARKET_PORTS: PropertyPorts = { makeWholeOnMortgage, assertDeedTransferable }
+
+/**
+ * Spec 19.5's wiring for Escort Service and Chop Shop. `board` emits `RentCharged` and
+ * `underworld` turns it into dirty cash for the deed's owner; the two cannot import each
+ * other (`board -> underworld -> session -> markets -> board`), so the composition root
+ * joins them. `BoardPorts` has no default implementation on purpose — before this, the
+ * two rent-driven ventures paid $0 for the whole game because nothing called
+ * `ventureIncomeFromRent`, and a defaulted no-op port would have hidden that just as
+ * effectively as no call site at all.
+ */
+export const BOARD_PORTS: BoardPorts = { ventureIncomeFromRent }
+
+export function decideBoardAction(
+  state: GameState,
+  command: BoardCommand,
+): readonly GameEvent[] | Rejection {
+  return decideBoard(state, command, BOARD_PORTS)
+}
 
 export function decidePropertyAction(
   state: GameState,

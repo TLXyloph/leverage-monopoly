@@ -6,7 +6,7 @@ import type { DeedId, DiceRoll } from '../../src/core/types.js'
 import { ECONOMY } from '../../src/config/economy.js'
 import { createGame, decideSession } from '../../src/contexts/session/index.js'
 import { DRAFT_ROUNDS, availableDeeds, decideDraft } from '../../src/contexts/draft/index.js'
-import { decideBoard } from '../../src/contexts/board/index.js'
+import { decideBoardAction } from '../../src/core/decide.js'
 import { decideDeck } from '../../src/contexts/decks/index.js'
 import { decideCreditAction } from '../../src/core/decide.js'
 import {
@@ -171,7 +171,7 @@ function runRound(run: Run, round: ScriptedRound): void {
   run.advance('open->movement')
   run.state.config.turnOrder.forEach((player, i) => {
     const dice: DiceRoll = round.rolls[i] ?? [1, 2]
-    run.submit(`roll:${player}`, decideBoard(run.state, { type: 'roll-dice', player, dice }))
+    run.submit(`roll:${player}`, decideBoardAction(run.state, { type: 'roll-dice', player, dice }))
     if (round.drawCard && i === 0) {
       run.submit('draw-card', decideDeck(run.state, {
         type: 'DrawCard', era: run.state.era, player,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { decideBoard, rentDue, rentRecipient } from './index.js'
+import { rentDue, rentRecipient } from './index.js'
+import { decideBoardAction } from '../../core/decide.js'
 import { initialState } from '../session/index.js'
 import { reduce } from '../../core/reduce.js'
 import { isRejection } from '../../core/errors.js'
@@ -145,7 +146,7 @@ describe('who pays and who receives', () => {
       ...state,
       players: { ...state.players, [player]: { ...state.players[player], position: from } },
     }
-    const result = decideBoard(seeded, { type: 'roll-dice', player, dice })
+    const result = decideBoardAction(seeded, { type: 'roll-dice', player, dice })
     if (isRejection(result)) throw new Error(result.message)
     return { seeded, events: result }
   }
