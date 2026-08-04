@@ -1,10 +1,11 @@
 import { floorPercent } from '../../src/core/money.js'
-import type { GameState, PoolAssetRef, SwapReference } from '../../src/core/state.js'
+import type { DeedState, GameState, PoolAssetRef, SwapReference } from '../../src/core/state.js'
 import type { BriberyEffect } from '../../src/core/events.js'
 import type { ContractId, DeedId, Money, PlayerId } from '../../src/core/types.js'
 import type { Rejection } from '../../src/core/errors.js'
 import type { GameEvent } from '../../src/core/events.js'
 import { decideCreditAction, decidePropertyAction } from '../../src/core/decide.js'
+import { HOTEL_LEVEL, canBuildOn, isBuildable, ownsWholeGroup } from '../../src/contexts/board/index.js'
 import { decideMarkets } from '../../src/contexts/markets/index.js'
 import { decideSecuritization, expectedPoolCashflow } from '../../src/contexts/securitization/index.js'
 import { decideUnderworld } from '../../src/contexts/underworld/index.js'
@@ -24,6 +25,18 @@ export function actorAt(state: GameState, index: Slot): PlayerId {
 export function otherThan(state: GameState, self: PlayerId, index: Slot): PlayerId | null {
   const others = state.config.turnOrder.filter((p) => p !== self)
   return at(others, index)
+}
+
+/** Narrows `DeedState.owner` (`PlayerId | 'bank' | null`) to an actual player. Every
+ * deed not yet drafted, or that never gets drafted (`unlockMode` and the 7-round draft
+ * budget do not guarantee all 28 are claimed), reads `owner: null`; a few are `'bank'`.
+ * `build-house`/`sell-house` below scan ALL deeds on the board (not just one actor's),
+ * so — unlike `deedsOf`, which is already scoped to one player's holdings and therefore
+ * never needs this — they must filter these out before treating `.owner` as a `PlayerId`
+ * (`tests/` is outside `tsconfig.json`'s `include`, so `npm run typecheck` does not
+ * catch a mistake here; this repo's test files carry that discipline manually). */
+function isPlayerOwned(deed: DeedState): deed is DeedState & { owner: PlayerId } {
+  return deed.owner !== null && deed.owner !== 'bank'
 }
 
 export function amount(balance: Money, pct: Percent): Money {
@@ -126,11 +139,24 @@ export function dispatch(state: GameState, action: ScriptedAction, seq: number):
       return decideCreditAction(state,
         { type: 'RepayCredit', player: self, amount: amount(me.drawnCredit, action.percent) })
 
-    case 'repay-distressed':
+    case 'repay-distressed': {
+      // Same "derive the actor from whoever can legally do this" pattern as
+      // `build-house`/`sell-house`/`sell-tranche` above, and for the identical reason:
+      // `distressedDebt` is nonzero for at most one or two of the four players even in
+      // `arbDistressGameScript`'s engineered histories, so requiring `self` (a
+      // uniformly random actor slot) to coincide with that specific player wasted three
+      // out of four attempts on `command.amount === 0` -> INVALID_AMOUNT. Measured at
+      // 0.40% acceptance with the coincidence still in place, just under this suite's
+      // 0.5% floor — see the task report.
+      const indebted = state.config.turnOrder.filter((p) => state.players[p].distressedDebt > 0)
+      const debtor = at(indebted, action.actor)
+      if (debtor === null) return null
+      const d = state.players[debtor]
       return decideCreditAction(state, {
-        type: 'RepayDistressedDebt', player: self,
-        amount: amount(me.distressedDebt, action.percent),
+        type: 'RepayDistressedDebt', player: debtor,
+        amount: amount(d.distressedDebt, action.percent),
       })
+    }
 
     case 'originate-peer-loan': {
       const borrower = otherThan(state, self, action.counterparty)
@@ -233,12 +259,20 @@ export function dispatch(state: GameState, action: ScriptedAction, seq: number):
     }
 
     case 'sell-tranche': {
+      // Resolves the seller from the tranche's ACTUAL holder, not from `action.actor`:
+      // `SellTranche` rejects NOT_OWNER unless `player` already holds the named tranche,
+      // and the pool creator (whoever holds the freshly minted tranches) is essentially
+      // never the same slot a uniformly random `action.actor` happens to name — measured
+      // at 0.2% acceptance against `create-pool` firing at all (~1.3%), i.e. most
+      // `sell-tranche` attempts against a live pool were failing on actor coincidence
+      // alone, not on any real precondition. See the task report for both figures.
       const pool = at(state.pools.filter((p) => !p.terminated), action.pool)
       const tranche = pool === null ? null : at(pool.tranches, action.tranche)
-      const to = otherThan(state, self, action.counterparty)
-      if (pool === null || tranche === null || to === null) return null
+      if (pool === null || tranche === null) return null
+      const to = otherThan(state, tranche.holder, action.counterparty)
+      if (to === null) return null
       return decideSecuritization(state, {
-        type: 'SellTranche', player: self, poolId: pool.id, tranche: tranche.kind, to,
+        type: 'SellTranche', player: tranche.holder, poolId: pool.id, tranche: tranche.kind, to,
         price: amount(tranche.face, action.percent),
       })
     }
@@ -280,15 +314,34 @@ export function dispatch(state: GameState, action: ScriptedAction, seq: number):
         { type: 'InsiderTrade', player: self, fundedFrom: action.fundedFrom })
 
     case 'build-house': {
-      const deed = at(deedsOf(state, self), action.deed)
-      if (deed === null) return null
-      return decidePropertyAction(state, { type: 'BuildHouse', player: self, deed })
+      // Resolves the builder from ANY deed on the board that is structurally eligible
+      // to build on right now (whole unmortgaged colour group owned by one player, not
+      // already a hotel, satisfies the even-build rule), rather than requiring `self`
+      // (a uniformly random actor slot) to happen to be that player. Owning a complete
+      // colour group is already rare — measured well under 0.5% acceptance when legality
+      // additionally required actor coincidence; see `sell-tranche` above for the same
+      // pattern applied to a pool. `decidePropertyAction` still re-checks everything
+      // (including affordability) and can still reject, e.g. on insufficient headroom.
+      const candidates = Object.values(state.deeds)
+        .filter(isPlayerOwned)
+        .filter((d) => isBuildable(d) && !d.mortgaged && d.houses < HOTEL_LEVEL
+          && ownsWholeGroup(state, d.group, d.owner) && canBuildOn(state, d))
+      const target = at(candidates, action.deed)
+      if (target === null) return null
+      return decidePropertyAction(state, { type: 'BuildHouse', player: target.owner, deed: target.id })
     }
 
     case 'sell-house': {
-      const deed = at(deedsOf(state, self), action.deed)
-      if (deed === null) return null
-      return decidePropertyAction(state, { type: 'SellHouse', player: self, deed })
+      // Same idea as `build-house` just above: pick from any deed on the board that
+      // currently carries a house, whoever owns it, instead of requiring `self` to be
+      // that owner. `decidePropertyAction` still re-checks the even-build rule and the
+      // hotel-breaking house-supply guard. `houses > 0` alone already implies a real
+      // owner (an undrafted or bank-held deed can never have been built on), but the
+      // guard is applied anyway so `target.owner` narrows to `PlayerId` without a cast.
+      const candidates = Object.values(state.deeds).filter(isPlayerOwned).filter((d) => d.houses > 0)
+      const target = at(candidates, action.deed)
+      if (target === null) return null
+      return decidePropertyAction(state, { type: 'SellHouse', player: target.owner, deed: target.id })
     }
 
     case 'mortgage-deed': {

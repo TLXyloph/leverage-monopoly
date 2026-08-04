@@ -12,10 +12,19 @@ import { decideCreditAction } from '../../src/core/decide.js'
 import {
   exhaustLiquidation, liquidationQueue, playersAwaitingLiquidation,
 } from '../../src/contexts/credit/index.js'
-import type { GameScript, ScriptedDraftRound, ScriptedRound } from './arbitraries.js'
+import { ACTION_KINDS } from './arbitraries.js'
+import type { GameScript, ScriptedAction, ScriptedDraftRound, ScriptedRound } from './arbitraries.js'
 import { amount, dispatch } from './dispatch.js'
 
 export interface Batch { readonly label: string; readonly events: readonly GameEvent[] }
+
+/** Per-`ScriptedAction`-arm acceptance telemetry. `attempts` counts every time the
+ * generator produced that arm and the driver actually dispatched it (skip, reject or
+ * accept all count as an attempt); `accepted` is the subset the engine's real decider
+ * accepted. `coverage.test.ts` sums this across every run in a census and asserts a
+ * floor per arm, so a generator arm that has quietly gone vacuous fails loudly instead
+ * of the rest of the suite passing against a near-empty sample for it. */
+export type ArmStats = Readonly<Record<ScriptedAction['kind'], { accepted: number; attempts: number }>>
 
 export interface Trace {
   /** `before[i]` is the state the batch at `batches[i]` was decided against. */
@@ -27,6 +36,8 @@ export interface Trace {
   readonly accepted: number
   readonly rejected: number
   readonly skipped: number
+  /** Per-arm acceptance telemetry; see `ArmStats`. */
+  readonly armStats: ArmStats
 }
 
 class Run {
@@ -36,6 +47,7 @@ class Run {
   accepted = 0
   rejected = 0
   skipped = 0
+  readonly armStats = new Map<ScriptedAction['kind'], { accepted: number; attempts: number }>()
 
   constructor(state: GameState) { this.state = state }
 
@@ -47,6 +59,14 @@ class Run {
     this.state = produced.reduce(reduce, this.state)
     this.accepted += 1
     return true
+  }
+
+  /** Tallies one `ScriptedAction` arm's outcome, independent of `submit`'s aggregate
+   * counters, so `coverage.test.ts` can report and floor each arm individually rather
+   * than only the sum across all 24. */
+  tallyArm(kind: ScriptedAction['kind'], accepted: boolean): void {
+    const entry = this.armStats.get(kind) ?? { accepted: 0, attempts: 0 }
+    this.armStats.set(kind, { accepted: entry.accepted + (accepted ? 1 : 0), attempts: entry.attempts + 1 })
   }
 
   advance(label: string): void {
@@ -144,7 +164,8 @@ function runRound(run: Run, round: ScriptedRound): void {
   runLiquidations(run, round)
 
   round.actions.forEach((action, i) => {
-    run.submit(`action:${action.kind}`, dispatch(run.state, action, i))
+    const ok = run.submit(`action:${action.kind}`, dispatch(run.state, action, i))
+    run.tallyArm(action.kind, ok)
   })
 
   run.advance('open->movement')
@@ -186,6 +207,10 @@ export function runScript(script: GameScript): Trace {
     runRound(run, round)
   }
 
+  const armStats = Object.fromEntries(
+    ACTION_KINDS.map((kind) => [kind, run.armStats.get(kind) ?? { accepted: 0, attempts: 0 }]),
+  ) as ArmStats
+
   return {
     before: run.before,
     batches: run.batches,
@@ -194,5 +219,6 @@ export function runScript(script: GameScript): Trace {
     accepted: run.accepted,
     rejected: run.rejected,
     skipped: run.skipped,
+    armStats,
   }
 }

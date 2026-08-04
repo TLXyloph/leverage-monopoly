@@ -1,14 +1,30 @@
 import { describe, it, expect } from 'vitest'
 import fc from 'fast-check'
 import { reduce } from '../../src/core/reduce.js'
-import { arbGameScript } from './arbitraries.js'
+import { arbDistressGameScript, arbGameScript } from './arbitraries.js'
+import type { GameScript } from './arbitraries.js'
 import { runScript } from './driver.js'
 import { conservedTotal, expectedDelta } from './ledger.js'
+
+/**
+ * Mixed with `arbDistressGameScript`, not `arbGameScript` alone: this property is the
+ * one that has to catch a reducer regression in `DistressedDebtRepaid` (see the break/
+ * revert counterexample in the task report), and that event fires on the order of once
+ * per several hundred runs under the plain generator — not a reliable trigger for a bug
+ * that only manifests on that one event type. See `coverage.test.ts` for the same mix
+ * and a longer explanation.
+ */
+function arbConservationScript(rounds: number): fc.Arbitrary<GameScript> {
+  return fc.oneof(
+    { weight: 1, arbitrary: arbGameScript(rounds) },
+    { weight: 1, arbitrary: arbDistressGameScript(rounds) },
+  )
+}
 
 describe('money is conserved', () => {
   it('holds across every generated history, end to end', () => {
     fc.assert(
-      fc.property(arbGameScript(14), (script) => {
+      fc.property(arbConservationScript(14), (script) => {
         const trace = runScript(script)
         const opening = conservedTotal(trace.before[0] ?? trace.final)
         expect(conservedTotal(trace.final)).toBe(opening + expectedDelta(trace.events))
@@ -19,7 +35,7 @@ describe('money is conserved', () => {
 
   it('holds batch by batch, so a failure names the decider that broke it', () => {
     fc.assert(
-      fc.property(arbGameScript(14), (script) => {
+      fc.property(arbConservationScript(14), (script) => {
         const trace = runScript(script)
         trace.batches.forEach((batch, i) => {
           const before = trace.before[i]

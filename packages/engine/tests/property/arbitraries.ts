@@ -64,6 +64,25 @@ export type ScriptedAction =
       readonly deedFrom: Slot; readonly deedTo: Slot
       readonly cashFromPercent: Percent; readonly cashToPercent: Percent }
 
+/** Every `ScriptedAction['kind']`. The one runtime source of truth for the set of
+ * arms — `driver.ts` uses it to seed `ArmStats` with every arm at zero (so a starved
+ * arm's row still exists to report on), and `coverage.test.ts` iterates it to assert a
+ * floor per arm. Built from a `Record<Kind, true>` rather than a plain string array so
+ * the union and this list cannot drift silently: a `kind` added to or removed from the
+ * `ScriptedAction` union above without a matching edit here fails to compile. */
+const ACTION_KIND_SET: Record<ScriptedAction['kind'], true> = {
+  'draw-credit': true, 'repay-credit': true, 'repay-distressed': true,
+  'originate-peer-loan': true, 'repay-peer-loan': true, 'sell-peer-loan': true,
+  'originate-future': true, 'sell-future': true, 'write-option': true,
+  'sell-option': true, 'exercise-option': true, 'create-pool': true,
+  'sell-tranche': true, 'write-swap': true, 'launch-venture': true,
+  'speakeasy': true, 'launder': true, 'bribe': true, 'insider-trade': true,
+  'build-house': true, 'sell-house': true, 'mortgage-deed': true,
+  'unmortgage-deed': true, 'trade-deeds': true,
+}
+export const ACTION_KINDS: readonly ScriptedAction['kind'][] =
+  Object.keys(ACTION_KIND_SET) as readonly ScriptedAction['kind'][]
+
 export interface ScriptedDraftRound {
   /** One offset per player, in turn order. The driver takes three distinct deeds from it. */
   readonly offsets: readonly Slot[]
@@ -159,7 +178,12 @@ const funded = fc.constantFrom('clean' as const, 'dirty' as const)
 export const arbAction: fc.Arbitrary<ScriptedAction> = fc.oneof(
   { weight: 2, arbitrary: fc.record({ kind: fc.constant('draw-credit' as const), actor: slot, percent }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('repay-credit' as const), actor: slot, percent }) },
-  { weight: 1, arbitrary: fc.record({ kind: fc.constant('repay-distressed' as const), actor: slot, percent }) },
+  // 2x, not 1x: `distressedDebt` is nonzero only after `CreditWrittenDown`, which the
+  // general generator alone reaches on the order of once per several hundred runs (see
+  // `arbDistressGameScript` below and the task report). Once `arbDistressGameScript`
+  // has actually put a player into that state, more attempts per round raise the odds
+  // some later round's `repay-distressed` lands while the debt is still outstanding.
+  { weight: 2, arbitrary: fc.record({ kind: fc.constant('repay-distressed' as const), actor: slot, percent }) },
   {
     weight: 2,
     arbitrary: fc.record({
@@ -222,7 +246,12 @@ export const arbAction: fc.Arbitrary<ScriptedAction> = fc.oneof(
     }),
   },
   {
-    weight: 1,
+    // 3x, not 1x: `dispatch.ts`'s `sell-tranche` case now resolves the seller from the
+    // tranche's actual holder rather than from `action.actor` (see that file's comment),
+    // which removes the old actor-coincidence rejection — but `create-pool` firing at
+    // all is still the bottleneck (~1.3% of its own attempts), so once a pool exists,
+    // more attempts per round raise the odds one of them names that pool's slot.
+    weight: 3,
     arbitrary: fc.record({
       kind: fc.constant('sell-tranche' as const), actor: slot, pool: slot,
       tranche: fc.constantFrom(0 as const, 1 as const, 2 as const),
@@ -260,12 +289,19 @@ export const arbAction: fc.Arbitrary<ScriptedAction> = fc.oneof(
     }),
   },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('insider-trade' as const), actor: slot, fundedFrom: funded }) },
-  { weight: 1, arbitrary: fc.record({ kind: fc.constant('build-house' as const), actor: slot, deed: slot }) },
-  { weight: 1, arbitrary: fc.record({ kind: fc.constant('sell-house' as const), actor: slot, deed: slot }) },
+  // `build-house`/`sell-house` at 2x: `dispatch.ts` now resolves both from ANY
+  // structurally-eligible deed on the board (any owner who holds the whole colour
+  // group / any deed currently carrying a house), not from `action.actor`'s own
+  // holdings — legality no longer needs the random actor slot to coincide with the
+  // one player who happens to own a complete group. The remaining bottleneck is
+  // whether ANY group is ever completed at all, which `trade-deeds` (also raised,
+  // below) helps with by consolidating deeds across players more often.
+  { weight: 2, arbitrary: fc.record({ kind: fc.constant('build-house' as const), actor: slot, deed: slot }) },
+  { weight: 2, arbitrary: fc.record({ kind: fc.constant('sell-house' as const), actor: slot, deed: slot }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('mortgage-deed' as const), actor: slot, deed: slot }) },
   { weight: 1, arbitrary: fc.record({ kind: fc.constant('unmortgage-deed' as const), actor: slot, deed: slot }) },
   {
-    weight: 1,
+    weight: 2,
     arbitrary: fc.record({
       kind: fc.constant('trade-deeds' as const), actor: slot, counterparty: slot,
       deedFrom: slot, deedTo: slot,
@@ -311,5 +347,68 @@ export function arbGameScript(maxRounds: number): fc.Arbitrary<GameScript> {
     shuffles: arbShuffles,
     draft: fc.array(arbDraftRound, { minLength: 7, maxLength: 7 }),
     rounds: fc.array(arbRound, { minLength: 1, maxLength: maxRounds, size: 'max' }),
+  })
+}
+
+/**
+ * A targeted scenario, COMPOSED with `arbGameScript` rather than replacing it: it starts
+ * from an ordinary generated script and splices a handful of extra, deterministic-shaped
+ * actions into round 7 (era II — peer loans are locked in era I, `ECONOMY.UNLOCK_ERA`),
+ * reliably driving turn-order slot 0 ("the victim") through the whole distress chain that
+ * `arbGameScript` alone reaches only on the order of once per several hundred runs (see
+ * the task report's measured `CreditWrittenDown` acceptance).
+ *
+ * The mechanism, in order:
+ *   1. Several `draw-credit` attempts push the victim's drawn bank balance up toward
+ *      their borrowing base. (Fixed-dollar requests against a variable headroom — some
+ *      of these are expected to reject once headroom is exhausted; that is fine, a
+ *      rejection here costs nothing.)
+ *   2. Two `originate-peer-loan`s, from two other players (slots 1 and 2) TO the victim
+ *      (slot 0), each a short (1-round), high-rate (30%) note pledging one of the
+ *      victim's deeds as collateral. Spec section 7: a coupon the borrower cannot fund
+ *      from clean cash without breaching their OWN borrowing base defaults; a 1-round
+ *      term also defaults unconditionally at the next Settlement if still outstanding
+ *      regardless of funding. Two independent lenders/collateral deeds, not one: a
+ *      single lost deed against a roughly 7-deed post-draft portfolio rarely shrinks the
+ *      liquidatable set enough on its own to guarantee `exhaustLiquidation` finds no cure
+ *      (see `dispatch.ts`'s `sell-house`/`sell-tranche` comments for the same "structural
+ *      fix over hoping for coincidence" idea applied to a chain instead of one command).
+ *
+ *   A default (spec 19.10) permanently halves the borrower's borrowing base
+ *   (`creditImpaired`) AND moves the pledged collateral to the lender — both widen the
+ *   margin shortfall and shrink what the eventual forced-liquidation auction can recover
+ *   from the victim, in the same stroke. `flagMarginCalls` (Settlement step 10) sees the
+ *   post-default state in the same batch the default lands in, so the earliest default
+ *   flags a margin call immediately; `exhaustLiquidation` runs two rounds later against
+ *   whatever the victim has left, which is exactly the state this scenario is built to
+ *   make small. This is what gives `repay-distressed`, `DistressedDebtAccrued` and
+ *   `CreditWrittenDown` a real (not vacuous) sample to be tested against.
+ */
+export function arbDistressGameScript(maxRounds: number): fc.Arbitrary<GameScript> {
+  return fc.tuple(
+    arbGameScript(maxRounds),
+    fc.array(fc.integer({ min: 8, max: 25 }), { minLength: 4, maxLength: 6 }),
+    slot,
+    slot,
+  ).map(([script, drawPercents, collateralA, collateralB]): GameScript => {
+    // Era II starts at round 7 (`ECONOMY.ROUNDS_PER_ERA` is 6); index 6 is that round.
+    // Short scripts (e.g. `conservation.test.ts`'s general property, `maxRounds: 14`)
+    // still comfortably clear the two extra rounds `exhaustLiquidation` needs afterward.
+    const targetRound = script.rounds[6]
+    if (targetRound === undefined) return script
+    const seed: readonly ScriptedAction[] = [
+      ...drawPercents.map((percent): ScriptedAction => ({ kind: 'draw-credit', actor: 0, percent })),
+      {
+        kind: 'originate-peer-loan', actor: 1, counterparty: 0,
+        percent: 40, ratePerRound: 0.3, termRounds: 1, collateral: collateralA,
+      },
+      {
+        kind: 'originate-peer-loan', actor: 2, counterparty: 0,
+        percent: 40, ratePerRound: 0.3, termRounds: 1, collateral: collateralB,
+      },
+    ]
+    const rounds = script.rounds.slice()
+    rounds[6] = { ...targetRound, actions: [...seed, ...targetRound.actions] }
+    return { ...script, rounds }
   })
 }
