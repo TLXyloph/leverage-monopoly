@@ -16,12 +16,20 @@
 - **No `Math.random`, no `Date.now`, no `new Date()`, no I/O anywhere in `packages/engine/src`.** Enforced by an ESLint rule and by a test that greps the built output.
 - **All money is integer dollars.** Never floats.
 - **Every percentage-of-money calculation MUST go through `core/money.ts`.** Never write
-  `Math.floor(amount * rate)` anywhere in the engine — it is wrong. `180 * 0.7` is
-  `125.99999999999999` in IEEE 754, so flooring it yields 125 and silently underpays the
-  70% floor; `0.25 + 0.05 * 2` is `0.35000000000000003`, which floors a $1,000 launder to
-  $649 instead of $650. Both bugs were found independently while validating this plan.
-  `floorPercent` works in integer basis points and is exact. An ESLint rule bans the raw
-  pattern, and every rule that rounds still states its direction in its task.
+  `Math.floor(amount * rate)` anywhere in the engine — it is wrong.
+
+  Two verified examples, both found while validating this plan:
+  - `180 * 0.7` is `125.99999999999999`, so flooring yields **125 instead of 126** and
+    silently underpays a deed sale.
+  - A laundering haircut at Heat 9 is `0.25 + 0.05 * 6` = `0.55`, but `1 - 0.55` is
+    `0.44999999999999996`, so `Math.floor(1000 * that)` yields **449 instead of 450**.
+    Heat 10 drifts the same way.
+
+  Note the trap is narrower than it looks and cannot be reasoned about by inspection:
+  `0.25 + 0.05 * 2` is *exactly* `0.35` and does NOT drift, so a spot-check at one Heat
+  value proves nothing about another. `floorPercent`/`floorPercentSum` work in integer
+  basis points and are exact at every input. An ESLint rule bans the raw pattern, and
+  every rule that rounds still states its direction in its task.
 - **Files stay under 500 lines.** Split by responsibility when approaching the limit.
 - **All public APIs are typed interfaces.** No `any`. `strict: true`, `noUncheckedIndexedAccess: true`.
 - **TDD.** Every task writes a failing test first, watches it fail, then implements.
@@ -438,8 +446,11 @@ describe('floorPercent', () => {
 
 describe('floorPercentSum', () => {
   it('accumulates rates without float drift', () => {
-    // 0.25 + 0.05 * 2 === 0.35000000000000003, which floors $1000 to $649
-    expect(floorPercentSum(1000, [0.25, 0.05, 0.05])).toBe(350)
+    // A Heat-9 laundering haircut is 0.25 + 0.05*6. Naively, 1 - 0.55 is
+    // 0.44999999999999996, so Math.floor(1000 * that) is 449, not 450.
+    expect(floorPercentSum(1000, [0.25, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05])).toBe(550)
+    // The complement is what the player actually receives.
+    expect(1000 - floorPercentSum(1000, [0.25, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05])).toBe(450)
   })
 })
 
