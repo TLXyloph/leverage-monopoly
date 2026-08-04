@@ -1,0 +1,36 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": { "ecmaVersion": 2023, "sourceType": "module" },
+  "plugins": ["@typescript-eslint"],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/explicit-module-boundary-types": "error"
+  },
+  "overrides": [
+    {
+      "files": ["packages/engine/src/**/*.ts"],
+      "excludedFiles": ["**/*.test.ts"],
+      "rules": {
+        "no-restricted-globals": [
+          "error",
+          { "name": "Date", "message": "The engine must be deterministic. Time enters as event data." }
+        ],
+        "no-restricted-properties": [
+          "error",
+          { "object": "Math", "property": "random", "message": "The engine must be deterministic. Randomness enters as event data." }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "group": ["**/contexts/*/*", "!**/contexts/*/index.js"], "message": "Import a context only through its index.ts." },
+              { "group": ["node:*", "fs", "path", "crypto"], "message": "The engine performs no I/O." }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
