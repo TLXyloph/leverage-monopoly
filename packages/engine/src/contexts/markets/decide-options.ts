@@ -3,7 +3,7 @@ import type { ContractId, DeedId, Money, PlayerId, RoundNumber } from '../../cor
 import type { GameState } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { type Rejection, reject } from '../../core/errors.js'
-import { outstandingOption } from './selectors.js'
+import { outstandingOption, poolHoldingDeedOption } from './selectors.js'
 
 export interface WriteDeedOption {
   readonly type: 'WriteDeedOption'
@@ -128,6 +128,12 @@ function decideSell(
   }
   if (o.holder !== cmd.player) {
     return reject('NOT_ASSET_OWNER', 'Only the holder of a deed option may resell it.')
+  }
+  if (poolHoldingDeedOption(state, o.id) !== null) {
+    return reject(
+      'ASSET_ALREADY_POOLED',
+      'That deed option is inside a live pool. Its cashflow belongs to the tranche holders.',
+    )
   }
   if (cmd.to === cmd.player) {
     return reject('SELF_DEALING', 'A deed option must be sold to another player.')

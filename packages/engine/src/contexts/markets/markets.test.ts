@@ -328,6 +328,62 @@ function routed(round: number) {
   return testState({ round, futures: [CONTRACT] })
 }
 
+/** Task 16: a rent future locked inside a live pool has had its cashflow sold to the
+ * tranche holders (spec section 8), so `markets` must refuse to let the holder resell
+ * it out from under the waterfall. Mirrors `credit/peer-loans.test.ts`'s identical
+ * guard on `SellPeerLoanNote`, using the same `ASSET_ALREADY_POOLED` rejection code. */
+describe('reselling a rent future', () => {
+  function resell(over: Record<string, unknown> = {}) {
+    return {
+      type: 'SellRentFuture' as const,
+      player: 'P2' as const,
+      contract: CONTRACT.id,
+      to: 'P3' as const,
+      price: 50,
+      ...over,
+    }
+  }
+
+  it('emits a sale event for an unpooled contract', () => {
+    expect(decideMarkets(routed(8), resell())).toEqual([
+      { type: 'RentFutureSold', id: CONTRACT.id, from: 'P2', to: 'P3', price: 50 },
+    ])
+  })
+
+  it('rejects a resale while the contract is inside a live pool', () => {
+    const state: GameState = {
+      ...routed(8),
+      pools: [{
+        id: 'pool-1', originator: 'P2', terminated: false,
+        assets: [
+          { kind: 'rent-future', id: CONTRACT.id },
+          { kind: 'peer-loan', id: 'l-2' },
+          { kind: 'peer-loan', id: 'l-3' },
+        ],
+        tranches: [
+          { kind: 'senior', face: 100, paid: 0, holder: 'P2' },
+          { kind: 'mezzanine', face: 50, paid: 0, holder: 'P2' },
+          { kind: 'equity', face: 20, paid: 0, holder: 'P2' },
+        ],
+      }],
+    }
+    expect(decideMarkets(state, resell()))
+      .toMatchObject({ rejected: true, code: 'ASSET_ALREADY_POOLED' })
+  })
+
+  it('allows the resale again once that pool has terminated', () => {
+    const state: GameState = {
+      ...routed(8),
+      pools: [{
+        id: 'pool-1', originator: 'P2', terminated: true,
+        assets: [{ kind: 'rent-future', id: CONTRACT.id }],
+        tranches: [],
+      }],
+    }
+    expect(isRejection(decideMarkets(state, resell()))).toBe(false)
+  })
+})
+
 describe('rent routing during an active window', () => {
   it('routes rent to the holder when a third party lands', () => {
     const state = routed(10)

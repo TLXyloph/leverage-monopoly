@@ -189,3 +189,27 @@ export function deedOptionRefund(state: GameState, deed: DeedId): Money {
   const o = outstandingOption(state, deed)
   return o === null ? 0 : o.premium
 }
+
+/**
+ * The id of the live (non-terminated) pool holding this rent future as an asset, or
+ * null. Mirrors `credit`'s `poolHoldingLoan` exactly: once `securitization` (Task 16)
+ * pools a contract, it has sold that cashflow to the tranche holders, so the contract
+ * cannot be resold out from under the waterfall (spec section 8). `state.pools` is core
+ * state (Task 2), so reading it here is not a context import — the dependency arrow
+ * runs securitization -> markets, never back.
+ */
+export function poolHoldingRentFuture(state: GameState, id: ContractId): ContractId | null {
+  const pool = state.pools.find(
+    (p) => !p.terminated && p.assets.some((a) => a.kind === 'rent-future' && a.id === id),
+  )
+  return pool === undefined ? null : pool.id
+}
+
+/** The id of the live (non-terminated) pool holding this deed option as an asset, or
+ * null. See `poolHoldingRentFuture` above. */
+export function poolHoldingDeedOption(state: GameState, id: ContractId): ContractId | null {
+  const pool = state.pools.find(
+    (p) => !p.terminated && p.assets.some((a) => a.kind === 'deed-option' && a.id === id),
+  )
+  return pool === undefined ? null : pool.id
+}

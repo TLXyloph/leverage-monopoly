@@ -210,6 +210,46 @@ describe('reselling a deed option', () => {
       type: 'SellDeedOption', player: 'P1', contract: OPTION.id, to: 'P3', price: 90,
     })).toMatchObject({ rejected: true, code: 'NOT_ASSET_OWNER' })
   })
+
+  /** Task 16: a deed option locked inside a live pool has had its cashflow sold to the
+   * tranche holders (spec section 8), so it cannot be resold out from under the
+   * waterfall. Mirrors `credit/peer-loans.test.ts`'s identical guard on
+   * `SellPeerLoanNote`, using the same `ASSET_ALREADY_POOLED` rejection code. */
+  it('rejects a resale while the contract is inside a live pool', () => {
+    const state: GameState = {
+      ...optioned(18),
+      pools: [{
+        id: 'pool-1', originator: 'P2', terminated: false,
+        assets: [
+          { kind: 'deed-option', id: OPTION.id },
+          { kind: 'peer-loan', id: 'l-2' },
+          { kind: 'peer-loan', id: 'l-3' },
+        ],
+        tranches: [
+          { kind: 'senior', face: 100, paid: 0, holder: 'P2' },
+          { kind: 'mezzanine', face: 50, paid: 0, holder: 'P2' },
+          { kind: 'equity', face: 20, paid: 0, holder: 'P2' },
+        ],
+      }],
+    }
+    expect(decideDeedOptions(state, {
+      type: 'SellDeedOption', player: 'P2', contract: OPTION.id, to: 'P3', price: 90,
+    })).toMatchObject({ rejected: true, code: 'ASSET_ALREADY_POOLED' })
+  })
+
+  it('allows the resale again once that pool has terminated', () => {
+    const state: GameState = {
+      ...optioned(18),
+      pools: [{
+        id: 'pool-1', originator: 'P2', terminated: true,
+        assets: [{ kind: 'deed-option', id: OPTION.id }],
+        tranches: [],
+      }],
+    }
+    expect(isRejection(decideDeedOptions(state, {
+      type: 'SellDeedOption', player: 'P2', contract: OPTION.id, to: 'P3', price: 90,
+    }))).toBe(false)
+  })
 })
 
 describe('the underlying deed is locked while an option is outstanding', () => {

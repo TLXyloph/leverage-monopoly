@@ -18,6 +18,8 @@ export {
   markDeedOption,
   mortgageImpact,
   outstandingOption,
+  poolHoldingDeedOption,
+  poolHoldingRentFuture,
   rentEvents,
   rentFutureMakeWhole,
   rentPayment,

@@ -4,7 +4,7 @@ import type { GameState } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { type Rejection, reject } from '../../core/errors.js'
 import { type DeedOptionCommand, decideDeedOptions } from './decide-options.js'
-import { futureFor, rentFutureMakeWhole } from './selectors.js'
+import { futureFor, poolHoldingRentFuture, rentFutureMakeWhole } from './selectors.js'
 
 export interface OriginateRentFuture {
   readonly type: 'OriginateRentFuture'
@@ -138,6 +138,12 @@ function decideSell(
   }
   if (f.holder !== cmd.player) {
     return reject('NOT_ASSET_OWNER', 'Only the holder of a rent future may resell it.')
+  }
+  if (poolHoldingRentFuture(state, f.id) !== null) {
+    return reject(
+      'ASSET_ALREADY_POOLED',
+      'That rent future is inside a live pool. Its cashflow belongs to the tranche holders.',
+    )
   }
   if (cmd.to === cmd.player) {
     return reject('SELF_DEALING', 'A rent future must be sold to another player.')
