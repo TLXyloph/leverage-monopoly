@@ -70,6 +70,30 @@ export const ECONOMY = {
   /** Rent future windows may not exceed this many rounds. */
   MAX_FUTURE_WINDOW: 8,
 
+  /**
+   * Players who can owe rent on a deed: all four minus its owner, who owes
+   * nothing. Spec 19.2. Used ONLY by `markets`' valuation kernel to convert a
+   * raw per-roll landing probability into expected rent hits per round —
+   * `board`'s `landingProbability` deliberately returns the unconverted
+   * figure, so this factor is applied in exactly one place.
+   */
+  RENT_OBLIGORS: 3,
+
+  /**
+   * Correction for the extra rolls doubles generate, applied alongside
+   * RENT_OBLIGORS to convert per-roll probability to expected hits per round.
+   * Spec 19.2 fixes it at 1.19. Mirrors `config/board.ts`'s own
+   * `DOUBLES_ROLL_MULTIPLIER` (used there for board's traffic-display
+   * helpers) — kept as a separate literal here rather than imported, since
+   * `config/board.ts` already imports `ECONOMY` and the reverse import would
+   * cycle the two config modules.
+   */
+  DOUBLES_ROLL_MULTIPLIER: 1.19,
+
+  /** Outcome band displayed beside expected value on every valuation. Spec section 6. */
+  VALUATION_PERCENTILE_LOW: 0.1,
+  VALUATION_PERCENTILE_HIGH: 0.9,
+
   /** Hard game length. Simulation shows 36 rounds produces 82% bankruptcy. */
   TOTAL_ROUNDS: 24,
   ROUNDS_PER_ERA: 6,

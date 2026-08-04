@@ -1,13 +1,17 @@
 import { reduceBoard } from '../contexts/board/index.js'
 import { reduceCredit, reducePeerLoans } from '../contexts/credit/index.js'
 import { reduceDraft } from '../contexts/draft/index.js'
+import { reduceMarkets } from '../contexts/markets/index.js'
 import { initialState, reduceSession } from '../contexts/session/index.js'
 import type { GameEvent } from './events.js'
 import type { GameState } from './state.js'
 
 export function reduce(state: GameState, event: GameEvent): GameState {
-  return reducePeerLoans(
-    reduceDraft(reduceCredit(reduceBoard(reduceSession(state, event), event), event), event),
+  return reduceMarkets(
+    reducePeerLoans(
+      reduceDraft(reduceCredit(reduceBoard(reduceSession(state, event), event), event), event),
+      event,
+    ),
     event,
   )
 }
