@@ -67,6 +67,14 @@ export const ECONOMY = {
   /** A CDS writer must post this fraction of notional against their borrowing base. */
   CDS_COLLATERAL_RATE: 0.3,
 
+  /** Ratings formula, spec section 8:
+   *  score = coverage * (1 - RATING_CONCENTRATION_WEIGHT * concentration)
+   *                   / (1 + RATING_LEVERAGE_WEIGHT * leverage) */
+  RATING_CONCENTRATION_WEIGHT: 0.25,
+  RATING_LEVERAGE_WEIGHT: 0.1,
+  /** Borrower leverage is capped at this before it enters the weighted mean. */
+  RATING_MAX_LEVERAGE: 5,
+
   /** Rent future windows may not exceed this many rounds. */
   MAX_FUTURE_WINDOW: 8,
 
