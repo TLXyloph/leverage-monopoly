@@ -175,11 +175,19 @@ export function decideCredit(
       const ranked = command.bids
         .filter((b) => b.amount >= floorPrice)
         .slice()
+        // Two equal bids from the SAME player compare 0 on both keys — a duplicate the
+        // command shape permits and nothing rejects — so the index into `command.bids`
+        // breaks the final tie. Without it the winner depends on V8's sort being stable,
+        // which is an implementation detail, not a guarantee this engine may rely on.
+        .map((bid, index) => ({ bid, index }))
         .sort(
           (a, b) =>
-            b.amount - a.amount ||
-            state.config.turnOrder.indexOf(a.player) - state.config.turnOrder.indexOf(b.player),
+            b.bid.amount - a.bid.amount ||
+            state.config.turnOrder.indexOf(a.bid.player)
+              - state.config.turnOrder.indexOf(b.bid.player) ||
+            a.index - b.index,
         )
+        .map((x) => x.bid)
       const winner = ranked[0]
       const sale: GameEvent = {
         type: 'DeedLiquidated',

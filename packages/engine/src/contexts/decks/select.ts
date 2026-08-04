@@ -85,7 +85,12 @@ function resolvePoolEntity(
       const next = cmp(poolTieValue(state, a.id, t.by), poolTieValue(state, b.id, t.by), t.direction)
       if (next !== 0) return next
     }
+    // Turn order alone is NOT total: two pools originated by the same player compare 0,
+    // and equal-comparing elements survive only because V8's sort happens to be stable.
+    // Determinism is this engine's foundational property and must not rest on a V8
+    // implementation detail, so pool id — unique by construction — breaks the last tie.
     return (order.get(a.originator) ?? 0) - (order.get(b.originator) ?? 0)
+      || a.id.localeCompare(b.id)
   })[0]
   return best === undefined ? null : { kind: 'pool', poolId: best.id }
 }
@@ -129,7 +134,12 @@ function resolveTrancheEntity(
       const next = cmp(trancheTieValue(state, a, t.by), trancheTieValue(state, b, t.by), t.direction)
       if (next !== 0) return next
     }
+    // Two tranches held by the same player compare 0 on turn order alone — routine,
+    // since one player often holds several tranches of one pool. Pool id then tranche
+    // kind makes the order total; a pool has at most one tranche of each kind.
     return (order.get(a.holder) ?? 0) - (order.get(b.holder) ?? 0)
+      || a.poolId.localeCompare(b.poolId)
+      || a.kind.localeCompare(b.kind)
   })[0]
   return best === undefined ? null : { kind: 'tranche', poolId: best.poolId, tranche: best.kind }
 }
@@ -142,7 +152,10 @@ function resolveRentFutureEntity(
   const best = [...state.futures].sort((a, b) => {
     const primary = cmp(markRentFuture(state, a.id), markRentFuture(state, b.id), e.direction)
     if (primary !== 0) return primary
+    // Two futures held by the same player compare 0 on turn order alone. Contract id
+    // is unique by construction and makes the order total.
     return (order.get(a.holder) ?? 0) - (order.get(b.holder) ?? 0)
+      || a.id.localeCompare(b.id)
   })[0]
   return best === undefined ? null : { kind: 'rent-future', contractId: best.id }
 }
