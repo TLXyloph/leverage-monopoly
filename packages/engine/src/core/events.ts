@@ -138,6 +138,9 @@ export type GameEvent =
   // --- decks ---
   | { type: 'DeckShuffled'; era: Era; order: readonly number[] }
   | { type: 'CardDrawn'; era: Era; index: number; player: PlayerId }
+  /** E3-05's private reveal-and-reorder. A deliberate player choice, not randomness —
+   * see STOCHASTIC_EVENTS below, which deliberately excludes it. */
+  | { type: 'DeckReordered'; era: Era; order: readonly number[]; player: PlayerId }
 
 export type EventType = GameEvent['type']
 

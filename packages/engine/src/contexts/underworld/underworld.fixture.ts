@@ -81,6 +81,15 @@ export function makeState(over: Partial<GameState> = {}): GameState {
       3: { order: [4, 9, 1], drawn: 0 },
       4: { order: [], drawn: 0 },
     },
+    cardEffects: {
+      modifiers: [], entitlements: [], poolInjections: {}, scheduledPoolTerminations: [], seq: 0,
+      counters: {
+        rentReceivedThisGame: Object.fromEntries(PLAYER_IDS.map((p) => [p, 0])) as Record<PlayerId, Money>,
+        rentReceivedThisEra: Object.fromEntries(PLAYER_IDS.map((p) => [p, 0])) as Record<PlayerId, Money>,
+        dirtyActionsThisGame: Object.fromEntries(PLAYER_IDS.map((p) => [p, 0])) as Record<PlayerId, number>,
+        launderCountThisGame: Object.fromEntries(PLAYER_IDS.map((p) => [p, 0])) as Record<PlayerId, number>,
+      },
+    },
     ...over,
   }
 }

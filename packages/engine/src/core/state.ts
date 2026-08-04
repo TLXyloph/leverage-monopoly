@@ -2,6 +2,7 @@ import type {
   ColorGroup, ContractId, DeedId, Era, Money,
   PlayerId, Phase, RoundNumber, SquareIndex,
 } from './types.js'
+import type { CardEffectsState } from '../contexts/decks/index.js'
 
 export interface GameConfig {
   readonly turnOrder: readonly PlayerId[]
@@ -163,4 +164,5 @@ export interface GameState {
   readonly pools: readonly Pool[]
   readonly swaps: readonly Swap[]
   readonly decks: Readonly<Record<Era, DeckState>>
+  readonly cardEffects: CardEffectsState
 }

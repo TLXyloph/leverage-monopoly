@@ -6,6 +6,25 @@ import type {
 } from '../../core/state.js'
 import type { DeedId, PlayerId } from '../../core/types.js'
 import { PLAYER_IDS } from '../../core/types.js'
+import type { CardEffectsState } from '../decks/index.js'
+
+/**
+ * The empty `cardEffects` value, inlined rather than imported from `contexts/decks`
+ * (whose `index.ts` transitively imports `board`, which imports `session` for
+ * `isUnlocked` — importing `decks` from here would close that cycle). `decks/reduce.ts`
+ * exports the identical shape as `emptyCardEffects`; this is the one place outside that
+ * context allowed to duplicate it, purely to seed `GameState`'s new field.
+ */
+function emptyCardEffectsFor(order: readonly PlayerId[]): CardEffectsState {
+  const zero = Object.fromEntries(order.map((p) => [p, 0])) as Record<PlayerId, number>
+  return {
+    modifiers: [], entitlements: [], poolInjections: {}, scheduledPoolTerminations: [], seq: 0,
+    counters: {
+      rentReceivedThisGame: zero, rentReceivedThisEra: zero,
+      dirtyActionsThisGame: zero, launderCountThisGame: zero,
+    },
+  }
+}
 
 const EMPTY_DECK: DeckState = { order: [], drawn: 0 }
 
@@ -69,6 +88,7 @@ export function initialState(config: GameConfig): GameState {
     pools: [],
     swaps: [],
     decks: { 1: EMPTY_DECK, 2: EMPTY_DECK, 3: EMPTY_DECK, 4: EMPTY_DECK },
+    cardEffects: emptyCardEffectsFor(PLAYER_IDS),
   }
 }
 
