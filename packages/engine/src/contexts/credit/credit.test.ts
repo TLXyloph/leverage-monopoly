@@ -182,6 +182,7 @@ describe('drawing and repaying the credit line', () => {
     expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH + 250)
     expect(after.players.P1.drawnCredit).toBe(250)
     expect(after.treasury).toBe(0) // principal is bank money, not Treasury money
+    expect(totalMoney(after)).toBe(totalMoney(table))
   })
 
   it('refuses a draw beyond the borrowing base, and allows one exactly to it', () => {
@@ -211,6 +212,7 @@ describe('drawing and repaying the credit line', () => {
     const after = applyAll(drawn, events)
     expect(after.players.P1.cleanCash).toBe(300)
     expect(after.players.P1.drawnCredit).toBe(100)
+    expect(totalMoney(after)).toBe(totalMoney(drawn))
   })
 
   it('refuses to repay more than is drawn, or more clean cash than is held', () => {
@@ -227,6 +229,34 @@ describe('drawing and repaying the credit line', () => {
       .toBe('INSUFFICIENT_BORROWING_BASE')
     expect(eventsOf(decideCredit(impaired, { type: 'DrawCredit', player: 'P1', amount: 150 })))
       .toHaveLength(1)
+  })
+
+  it('conserves money identically across a full draw / carrying-cost / interest / repay sequence', () => {
+    // One running identity across all four steps of the Open-to-Settlement path, so a
+    // regression in any single reducer (draw, either Settlement step, or repay) shows
+    // up here even if that step's own dedicated test happens to miss it.
+    const baseline = totalMoney(table)
+
+    const drawn = applyAll(
+      table,
+      eventsOf(decideCredit(table, { type: 'DrawCredit', player: 'P1', amount: 200 })),
+    )
+    expect(totalMoney(drawn)).toBe(baseline)
+
+    const afterCarrying = applyAll(drawn, settleCarryingCost(drawn))
+    expect(afterCarrying.treasury).toBe(8) // CARRYING_COST_PER_DEED, fully affordable
+    expect(totalMoney(afterCarrying)).toBe(baseline)
+
+    const afterInterest = applyAll(afterCarrying, settleCreditInterest(afterCarrying))
+    expect(afterInterest.treasury).toBe(18) // 8 + floorPercent(200, 0.05), fully affordable
+    expect(totalMoney(afterInterest)).toBe(baseline)
+
+    const repaid = applyAll(
+      afterInterest,
+      eventsOf(decideCredit(afterInterest, { type: 'RepayCredit', player: 'P1', amount: 150 })),
+    )
+    expect(repaid.players.P1.drawnCredit).toBe(50) // 200 - 150
+    expect(totalMoney(repaid)).toBe(baseline)
   })
 })
 
@@ -352,17 +382,26 @@ describe('Era II stimulus (spec section 4)', () => {
     expect(advanceEraIIStimulus(gameState({ round: 7, era: 2, phase: 'open' }))).toEqual([])
   })
 
-  it('is a loan: it lands on clean cash and on the drawn balance, and drains the Treasury', () => {
-    // Unlike CreditDrawn (Treasury-neutral: "bank money, not Treasury money"), the
-    // stimulus is named as a Treasury outflow, so it deliberately does NOT leave
-    // `totalMoney` unchanged -- it is real, spec-intended monetary expansion (spec
-    // section 4: "$1,200 of permanent inflation converted into serviceable debt"),
-    // recovered later only as the debt is serviced through Settlement step 4.
+  it('is a loan: it lands on clean cash and on the drawn balance together, like any other draw', () => {
+    // The stimulus is a COMPULSORY credit-line advance, not a fiscal transfer. It funds
+    // identically to a voluntary CreditDrawn -- cash and debt both rise by the same
+    // amount -- and so, exactly like CreditDrawn, leaves the Treasury untouched. The
+    // Treasury's role is fiscal only: carrying cost, interest and taxes in; GO salary out.
     const market = gameState({ round: STIMULUS_ROUND, era: 2, phase: 'market', treasury: 5000 })
     const after = applyAll(market, advanceEraIIStimulus(market))
     expect(after.players.P1.cleanCash).toBe(ECONOMY.STARTING_CASH + ECONOMY.ERA_II_STIMULUS)
     expect(after.players.P1.drawnCredit).toBe(ECONOMY.ERA_II_STIMULUS)
-    expect(after.treasury).toBe(5000 - 4 * ECONOMY.ERA_II_STIMULUS)
+    expect(after.treasury).toBe(5000) // unchanged -- the same rule CreditDrawn already follows
+    expect(totalMoney(after)).toBe(totalMoney(market))
+  })
+
+  it('preserves the conservation identity across all four players taking the stimulus at once', () => {
+    // Pinned directly: this is the exact property that a Treasury debit here would
+    // break, at exactly $1,200 (4 players x $300) if it regressed.
+    const market = gameState({ round: STIMULUS_ROUND, era: 2, phase: 'market', treasury: 5000 })
+    const after = applyAll(market, advanceEraIIStimulus(market))
+    expect(totalMoney(after)).toBe(totalMoney(market))
+    expect(totalMoney(after) - totalMoney(market)).toBe(0)
   })
 
   it('accrues at the Era II rate from that same round', () => {

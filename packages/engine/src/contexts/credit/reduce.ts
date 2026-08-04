@@ -56,17 +56,25 @@ export function reduceCredit(state: GameState, event: GameEvent): GameState {
     case 'InterestAccrued':
       return payTreasury(state, event.player, event.amount)
 
-    /** Spec section 4: the Era II stimulus is a loan, not a grant — it lands on clean
-     * cash AND the drawn balance together, and leaves the Treasury. */
+    /**
+     * Spec section 4: the Era II stimulus is a loan, not a grant — it lands on clean
+     * cash AND the drawn balance together, exactly like a voluntary CreditDrawn. The
+     * Treasury is untouched: this is a compulsory credit-line advance, not a fiscal
+     * transfer. Under this engine's model the credit line creates the money it lends
+     * (that is why an ordinary draw never touches the Treasury either — see
+     * `CreditDrawn`), and the Treasury's role stays purely fiscal: it collects
+     * carrying cost, interest and taxes, and pays GO salary. Debiting the Treasury
+     * here as well would double-count the $300 — once as new drawn credit, again as a
+     * Treasury outflow — and silently break the conservation identity
+     * `sum(cleanCash) - sum(drawnCredit) - sum(distressedDebt) + treasury` at every
+     * round-7 stimulus.
+     */
     case 'StimulusAdvanced': {
       const p = state.players[event.player]
-      return {
-        ...withPlayer(state, event.player, {
-          cleanCash: p.cleanCash + event.amount,
-          drawnCredit: p.drawnCredit + event.amount,
-        }),
-        treasury: state.treasury - event.amount,
-      }
+      return withPlayer(state, event.player, {
+        cleanCash: p.cleanCash + event.amount,
+        drawnCredit: p.drawnCredit + event.amount,
+      })
     }
 
     /** Settlement step 3, spec section 4. Same shortfall handling as InterestAccrued. */
