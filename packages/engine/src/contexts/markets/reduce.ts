@@ -55,8 +55,10 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
     /**
      * Mortgage-triggered make-whole. The holder is made whole in full regardless of
      * the owner's cash on hand; `decide.ts`'s `makeWholeOnMortgage` computes `amount`
-     * as exactly what the owner can pay plus the paired `DistressedDebtIncurred`
-     * shortfall, so the two events together conserve money with no Treasury leg.
+     * as exactly what the owner can pay plus a paired `ObligationCapitalised {
+     * obligation: 'make-whole' }` for the shortfall, so the two events together
+     * conserve money with no Treasury leg. The capitalised leg is reduced by
+     * `credit`'s `reduceCredit`, which runs before this reducer in `core/reduce.ts`.
      */
     case 'RentFutureMadeWhole': {
       const f = state.futures.find((x) => x.id === event.id)
@@ -67,10 +69,12 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
     }
 
     /**
-     * The debt-side leg of `RentFutureMadeWhole`'s shortfall. Not exclusively a
-     * markets event in principle, but nothing else in the engine currently reduces
-     * it (grepped: `DistressedDebtIncurred` had zero reducer cases before this task),
-     * and `makeWholeOnMortgage` is this context's only emitter of it.
+     * Retained defensively though no emitter remains: Task 20 found this context's
+     * only emitter (`makeWholeOnMortgage`'s shortfall) routing a shortfall here
+     * instead of through `ObligationCapitalised`, which broke money conservation —
+     * `distressedDebt` rose with no Treasury leg and no matching drop elsewhere.
+     * Spec 19.7 reserves this event for the terminal state after forced liquidation
+     * exhausts a portfolio; nothing in `markets` reaches that state.
      */
     case 'DistressedDebtIncurred': {
       const p = state.players[event.player]

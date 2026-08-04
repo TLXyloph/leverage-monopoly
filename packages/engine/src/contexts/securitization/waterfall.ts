@@ -149,10 +149,17 @@ function terminationEventsWithSwaps(state: GameState, pool: Pool): readonly Game
 
 /**
  * Waterfall for every live pool with cash to distribute this round, plus the
- * originator's distressed-debt shortfall (spec 19.8's obligation waterfall: a player is
- * never left unable to pay) when their clean cash falls short of the full amount
- * collected. `state` must already reflect any collateral liquidated this round, or the
+ * originator's obligation-waterfall shortfall (spec 19.8: a player is never left
+ * unable to pay) when their clean cash falls short of the full amount collected.
+ * `state` must already reflect any collateral liquidated this round, or the
  * originator's clean cash will read stale and trigger a false shortfall.
+ *
+ * The shortfall capitalises via `ObligationCapitalised { obligation: 'make-whole' }`
+ * rather than `DistressedDebtIncurred`. Task 20 found the original routing: spec 19.7
+ * reserves distressed debt for the terminal state an uncured margin call reaches only
+ * after forced liquidation is exhausted, and funding a waterfall distribution out of
+ * pocket is not that state — it is an ordinary automatic obligation, uncapped, exactly
+ * like every other step of spec 19.8's waterfall.
  */
 export function waterfallEvents(
   state: GameState,
@@ -171,7 +178,12 @@ export function waterfallEvents(
     })
     const cash = state.players[pool.originator].cleanCash
     if (cash < collected) {
-      out.push({ type: 'DistressedDebtIncurred', player: pool.originator, amount: collected - cash })
+      out.push({
+        type: 'ObligationCapitalised',
+        player: pool.originator,
+        amount: collected - cash,
+        obligation: 'make-whole',
+      })
     }
   }
   return out

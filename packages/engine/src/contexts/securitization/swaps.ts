@@ -5,6 +5,7 @@ import { ECONOMY } from '../../config/economy.js'
 import { floorPercent } from '../../core/money.js'
 import { findPeerLoan } from '../credit/index.js'
 import { findPool, trancheOf } from './selectors.js'
+import { reduceSecuritization } from './reduce.js'
 
 /**
  * The face value of the reference obligation, which caps the notional at origination.
@@ -52,13 +53,30 @@ function obligationShortfall(
 /**
  * Settlement step 7, spec 19.1. The buyer pays the negotiated premium to the seller
  * every Settlement, for as long as the swap is active.
+ *
+ * `working` is folded through `reduceSecuritization` after every swap, and each
+ * shortfall is priced against it rather than against the fixed `state` snapshot this
+ * function was called with. Task 20 found the un-threaded version: a buyer paying
+ * premiums on two or more swaps in the same round had every shortfall after the first
+ * priced against their ORIGINAL clean cash, ignoring what the earlier swaps in this
+ * very loop had already spent — `SwapPremiumPaid` itself floors the payer's live cash
+ * correctly (via `transfer`/`subCash` in `reduce.ts`), so the two disagreed: the
+ * recipient was credited the full premium every time, but the payer's total
+ * capitalised shortfall came in short of what their floored cash actually needed,
+ * manufacturing the gap as money the conservation identity in spec section 20 could
+ * not account for. Mirrors `settlePeerLoans`'s identical `applyLocally`/`working`
+ * pattern in `credit/decide.ts` for the same reason: the first coupon spends the cash
+ * the second was counting on.
  */
 export function settleSwapPremiums(state: GameState): readonly GameEvent[] {
   const out: GameEvent[] = []
+  let working = state
   for (const s of state.swaps) {
     if (s.status !== 'active' || s.premiumPerRound <= 0) continue
-    out.push({ type: 'SwapPremiumPaid', id: s.id, amount: s.premiumPerRound })
-    out.push(...obligationShortfall(state, s.buyer, s.premiumPerRound, 'cds-premium'))
+    const batch: GameEvent[] = [{ type: 'SwapPremiumPaid', id: s.id, amount: s.premiumPerRound }]
+    batch.push(...obligationShortfall(working, s.buyer, s.premiumPerRound, 'cds-premium'))
+    out.push(...batch)
+    working = batch.reduce(reduceSecuritization, working)
   }
   return out
 }
@@ -86,6 +104,12 @@ function payoutEvents(state: GameState, swap: Swap, payout: Money): readonly Gam
  * into Settlement step 6, immediately after the pool waterfalls: `roundEvents` already
  * carries this round's `PeerLoanDefaulted` events from Settlement step 5. Fires for
  * every active referencing swap, naked or not — the buyer need not hold the note.
+ *
+ * `working` is threaded through `reduceSecuritization` between swaps for the same
+ * reason `settleSwapPremiums` above threads it: a seller who wrote protection on two
+ * or more swaps that trigger in the same round must have the second payout's
+ * shortfall priced against what the first payout already spent, not against the
+ * stale `state` this function was called with.
  */
 export function loanCreditEvents(
   state: GameState,
@@ -97,11 +121,14 @@ export function loanCreditEvents(
       .map((e) => e.id),
   )
   const out: GameEvent[] = []
+  let working = state
   for (const s of state.swaps) {
     if (s.status !== 'active') continue
     const ref = s.reference
     if (ref.kind !== 'peer-loan' || !defaulted.has(ref.id)) continue
-    out.push(...payoutEvents(state, s, s.notional))
+    const batch = payoutEvents(working, s, s.notional)
+    out.push(...batch)
+    working = batch.reduce(reduceSecuritization, working)
   }
   return out
 }
@@ -119,6 +146,10 @@ export function trancheCreditEvents(
   shortfalls: readonly { readonly tranche: Tranche['kind']; readonly shortfall: Money }[],
 ): readonly GameEvent[] {
   const out: GameEvent[] = []
+  // See `loanCreditEvents` above: threaded for the same reason — a seller who wrote
+  // protection on two or more of this pool's tranche swaps must have the second
+  // payout priced against what the first already spent.
+  let working = state
   for (const s of state.swaps) {
     if (s.status !== 'active') continue
     const ref = s.reference
@@ -128,7 +159,9 @@ export function trancheCreditEvents(
       out.push({ type: 'SwapExpired', id: s.id })
       continue
     }
-    out.push(...payoutEvents(state, s, s.notional))
+    const batch = payoutEvents(working, s, s.notional)
+    out.push(...batch)
+    working = batch.reduce(reduceSecuritization, working)
   }
   return out
 }

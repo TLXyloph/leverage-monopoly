@@ -351,12 +351,16 @@ describe('settleSecuritization: the full Settlement step 6 pass', () => {
       { type: 'PeerLoanDefaulted', id: 'l-1', collateralTo: 'P1', writtenOff: 500 },
     ]
     const events = settleSecuritization(withPool, roundEvents)
-    expect(events).not.toContainEqual(expect.objectContaining({ type: 'DistressedDebtIncurred' }))
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'ObligationCapitalised' }))
     expect(events[0]).toMatchObject({ type: 'PoolCollateralLiquidated', proceeds: 320 })
     expect(events[1]).toMatchObject({ type: 'WaterfallPaid', collected: 320 })
   })
 
-  it('books the originator\'s shortfall as distressed debt rather than negative cash', () => {
+  it('books the originator\'s shortfall as capitalised drawn credit rather than negative cash', () => {
+    // Task 20 CORRECTION: the shortfall capitalises via ObligationCapitalised, not
+    // DistressedDebtIncurred — spec 19.7 reserves distressed debt for the terminal
+    // state after forced liquidation exhausts a portfolio, which funding a waterfall
+    // distribution out of pocket is not.
     const state = withPlayers(
       withLoans(gameState({ round: 13 }), [
         loan('l-1', { outstanding: 500, ratePerRound: 0.1, maturesAtRound: 15 }),
@@ -369,6 +373,8 @@ describe('settleSecuritization: the full Settlement step 6 pass', () => {
     const events = settleSecuritization(withPool, [
       { type: 'PeerLoanInterestPaid', id: 'l-1', amount: 500 },
     ])
-    expect(events).toContainEqual({ type: 'DistressedDebtIncurred', player: 'P1', amount: 400 })
+    expect(events).toContainEqual({
+      type: 'ObligationCapitalised', player: 'P1', amount: 400, obligation: 'make-whole',
+    })
   })
 })

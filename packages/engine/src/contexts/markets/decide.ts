@@ -186,13 +186,20 @@ export function expireRentFutures(state: GameState): readonly GameEvent[] {
  * VALUATION must be against the pre-mortgage state (a mortgaged deed values at
  * zero, so valuing after the fact would always yield $0 and reopen the exploit).
  *
- * The shortfall that becomes distressed debt is computed against the owner's
- * ACTUAL pre-mortgage clean cash, not a hypothetical cash-plus-mortgage-proceeds
- * figure: crediting the future proceeds here as well as via the eventual
- * DeedMortgaged event would double-count them, manufacturing money equal to the
- * mortgage proceeds every time a shortfall occurs. Using actual cash keeps this
- * task's own events conserved with no Treasury leg, independent of when or
- * whether DeedMortgaged is later applied.
+ * The shortfall that capitalises is computed against the owner's ACTUAL
+ * pre-mortgage clean cash, not a hypothetical cash-plus-mortgage-proceeds figure:
+ * crediting the future proceeds here as well as via the eventual DeedMortgaged
+ * event would double-count them, manufacturing money equal to the mortgage
+ * proceeds every time a shortfall occurs. Using actual cash keeps this task's own
+ * events conserved with no Treasury leg, independent of when or whether
+ * DeedMortgaged is later applied.
+ *
+ * The gap capitalises via `ObligationCapitalised { obligation: 'make-whole' }`
+ * rather than `DistressedDebtIncurred`: spec 19.7 reserves distressed debt for the
+ * terminal state an uncured margin call reaches only after forced liquidation is
+ * exhausted, which a single unaffordable make-whole is not — it is an ordinary
+ * automatic obligation and belongs on the same uncapped waterfall as rent, tax
+ * and interest (spec 19.8). Task 20 found and fixed the original routing.
  */
 export function makeWholeOnMortgage(
   state: GameState, deed: DeedId,
@@ -208,7 +215,9 @@ export function makeWholeOnMortgage(
   const events: GameEvent[] = [{ type: 'RentFutureMadeWhole', id: f.id, amount }]
   const gap = amount - state.players[d.owner].cleanCash
   if (gap > 0) {
-    events.push({ type: 'DistressedDebtIncurred', player: d.owner, amount: gap })
+    events.push({
+      type: 'ObligationCapitalised', player: d.owner, amount: gap, obligation: 'make-whole',
+    })
   }
   events.push({ type: 'RentFutureExpired', id: f.id })
   return events

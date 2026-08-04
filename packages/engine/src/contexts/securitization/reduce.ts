@@ -86,9 +86,22 @@ export function reduceSecuritization(state: GameState, event: GameEvent): GameSt
 
     case 'PoolCollateralLiquidated': {
       const deeds: Record<DeedId, DeedState> = { ...state.deeds }
+      // Task 20: a pledged deed is not necessarily bare land — nothing stops its
+      // owner building on it after pledging it as collateral, and nothing stops
+      // them mortgaging a DIFFERENT deed while this one still secures the loan.
+      // Selling it to the bank with `houses` left untouched destroyed components
+      // out of the fixed 32/12 supply on every default that hit a developed deed;
+      // the deed integrity property (`tests/property/deeds.test.ts`) caught it.
+      // Bare land is also the correct state for a bank-owned deed to enter auction
+      // from, mirroring `credit/reduce.ts`'s `BuildingsStripped` and `DeedLiquidated`.
+      let houses = 0
+      let hotels = 0
       for (const id of event.deeds) {
         const d = deeds[id]
-        if (d !== undefined) deeds[id] = { ...d, owner: 'bank' }
+        if (d === undefined) continue
+        houses += d.houses === 5 ? 0 : d.houses
+        hotels += d.houses === 5 ? 1 : 0
+        deeds[id] = { ...d, owner: 'bank', mortgaged: false, houses: 0 }
       }
       // Spec 19.4: this is a BANK PURCHASE of the collateral, not a player-to-player
       // transfer, so it debits the Treasury — following the precedent set by
@@ -99,6 +112,8 @@ export function reduceSecuritization(state: GameState, event: GameEvent): GameSt
       const withDeedsAndTreasury: GameState = {
         ...state,
         deeds,
+        housesRemaining: state.housesRemaining + houses,
+        hotelsRemaining: state.hotelsRemaining + hotels,
         treasury: state.treasury - event.proceeds,
       }
       const pool = findPool(state, event.poolId)

@@ -18,6 +18,7 @@ import {
   routingFutureFor,
 } from './selectors.js'
 import { reduceMarkets } from './reduce.js'
+import { reduce as reduceRoot } from '../../core/reduce.js'
 
 describe('rent future valuation kernel', () => {
   it('converts a per-roll probability to expected hits per round (spec 19.2)', () => {
@@ -465,13 +466,18 @@ describe('mortgaging an encumbered property', () => {
     ])
   })
 
-  it('turns an unaffordable make-whole into distressed debt', () => {
+  it('capitalises an unaffordable make-whole into drawn credit', () => {
     // CORRECTION beyond the brief: the shortfall is computed against the owner's
     // ACTUAL pre-mortgage clean cash (here $0), not cash-plus-mortgage-proceeds. The
     // brief's own formula (amount - proceeds) double-counts the proceeds once here
     // and again when DeedMortgaged eventually credits them, manufacturing money equal
     // to the mortgage proceeds on every shortfall. See the money-conservation block
     // below, which fails under the brief's original formula and passes under this one.
+    //
+    // Task 20 CORRECTION: the shortfall capitalises via ObligationCapitalised, not
+    // DistressedDebtIncurred — spec 19.7 reserves distressed debt for the terminal
+    // state after forced liquidation exhausts a portfolio, which a single unaffordable
+    // make-whole is not.
     const developed = { ...stJames('P1'), houses: 5 }
     const state = testState({
       round: 10,
@@ -484,7 +490,7 @@ describe('mortgaging an encumbered property', () => {
     expect(shortfall).toBeGreaterThan(0)
     expect(makeWholeOnMortgage(state, 'st-james-place')).toEqual([
       { type: 'RentFutureMadeWhole', id: CONTRACT.id, amount },
-      { type: 'DistressedDebtIncurred', player: 'P1', amount: shortfall },
+      { type: 'ObligationCapitalised', player: 'P1', amount: shortfall, obligation: 'make-whole' },
       { type: 'RentFutureExpired', id: CONTRACT.id },
     ])
   })
@@ -555,6 +561,18 @@ function applyAll(state: GameState, events: ReturnType<typeof rentEvents>): Game
   return events.reduce(reduceMarkets, state)
 }
 
+/**
+ * Task 20 CORRECTION: the make-whole shortfall now pairs `RentFutureMadeWhole` with
+ * `ObligationCapitalised` (was `DistressedDebtIncurred`), and `ObligationCapitalised`
+ * is a `credit`-context event — `reduceMarkets` alone treats it as a no-op. The money-
+ * conservation tests below need both reducers, exactly as the real engine composes
+ * them through `core/reduce.ts`, or they would (and briefly did) pass by failing to
+ * apply half of the pair rather than by the pair actually conserving money.
+ */
+function applyAllAcrossContexts(state: GameState, events: ReturnType<typeof rentEvents>): GameState {
+  return events.reduce(reduceRoot, state)
+}
+
 describe('money conservation (Global Constraint: no Treasury leg for markets)', () => {
   it('conserves money through origination', () => {
     const before = testState({ round: 8, cash: { P1: 500, P2: 500 } })
@@ -581,7 +599,7 @@ describe('money conservation (Global Constraint: no Treasury leg for markets)', 
   it('conserves money through an affordable make-whole', () => {
     const before = testState({ round: 10, cash: { P1: 500 }, futures: [CONTRACT] })
     const events = makeWholeOnMortgage(before, 'st-james-place')
-    const after = applyAll(before, events)
+    const after = applyAllAcrossContexts(before, events)
     expect(totalMoney(after)).toBe(totalMoney(before))
     expect(after.treasury).toBe(before.treasury)
   })
@@ -593,7 +611,9 @@ describe('money conservation (Global Constraint: no Treasury leg for markets)', 
       round: 10, cash: { P1: 0 }, deeds: { 'st-james-place': developed }, futures: [CONTRACT],
     })
     const events = makeWholeOnMortgage(before, 'st-james-place')
-    const after = applyAll(before, events)
+    // Cross-context: the shortfall's ObligationCapitalised leg is reduced by `credit`,
+    // not `markets`. See `applyAllAcrossContexts`.
+    const after = applyAllAcrossContexts(before, events)
     expect(totalMoney(after)).toBe(totalMoney(before))
     expect(after.treasury).toBe(before.treasury)
   })

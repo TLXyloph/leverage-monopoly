@@ -18,6 +18,14 @@ export type ObligationKind =
    * shape (pay in full, capitalise any shortfall), so it gets its own kind rather
    * than overloading 'cds-premium' with a different event. */
   | 'cds-payout'
+  /** Task 20. The shortfall on an automatic make-whole payment the payer's clean
+   * cash could not fully cover: a rent-future holder made whole on a mortgage
+   * (spec section 6), or a pool originator funding a waterfall distribution out of
+   * their own cash (spec 19.8). Both were wrongly routed through the terminal
+   * `DistressedDebtIncurred` event, which spec 19.7 reserves for an uncured margin
+   * call whose forced liquidation has exhausted the portfolio — neither site is
+   * that terminal state, so both capitalise instead, like every other obligation. */
+  | 'make-whole'
 
 /** Typed so the reducer never parses a display string. */
 export type BriberyEffect =
