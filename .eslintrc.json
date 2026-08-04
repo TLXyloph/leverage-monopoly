@@ -29,6 +29,25 @@
               { "group": ["node:*", "fs", "path", "crypto"], "message": "The engine performs no I/O." }
             ]
           }
+        ],
+        "no-restricted-syntax": [
+          "error",
+          {
+            "selector": "MemberExpression[object.name='globalThis'][property.name='Date']",
+            "message": "The engine must be deterministic. Time enters as event data. Use Date through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.name='window'][property.name='Date']",
+            "message": "The engine must be deterministic. Time enters as event data. Use Date through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.object.name='globalThis'][object.property.name='Math'][property.name='random']",
+            "message": "The engine must be deterministic. Randomness enters as event data. Use Math.random through a dependency injection or event parameter."
+          },
+          {
+            "selector": "MemberExpression[object.object.name='window'][object.property.name='Math'][property.name='random']",
+            "message": "The engine must be deterministic. Randomness enters as event data. Use Math.random through a dependency injection or event parameter."
+          }
         ]
       }
     }
