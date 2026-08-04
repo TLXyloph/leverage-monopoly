@@ -5917,14 +5917,19 @@ Every fix below gives an existing crossing the counterparty it was missing. Modi
       return { ...next, treasury: next.treasury + event.amount }
     }
 
-    /** Repaying the bank returns money to the Treasury rather than deleting it. */
+    /**
+     * NO Treasury leg. The Treasury already booked this income when the debt
+     * ACCRUED; crediting it again on repayment counts the same dollar twice.
+     * Cash falls and the obligation falls with it, which nets to zero on its own:
+     *   Δ = (−amount) − (−amount) = 0
+     * Adding `treasury + amount` here would make Δ = +amount and break the identity.
+     */
     case 'DistressedDebtRepaid': {
       const p = state.players[event.player]
-      const next = withPlayer(state, event.player, {
+      return withPlayer(state, event.player, {
         cleanCash: p.cleanCash - event.amount,
         distressedDebt: p.distressedDebt - event.amount,
       })
-      return { ...next, treasury: next.treasury + event.amount }
     }
 
     /** The bank buys the buildings back, so the Treasury funds the sellback. */
@@ -5944,9 +5949,15 @@ Every fix below gives an existing crossing the counterparty it was missing. Modi
     }
 ```
 
-`DistressedDebtRepaid` and `DistressedDebtAccrued` are symmetric with `InterestAccrued`,
-which Task 9 already routes to the Treasury: the bank's income is Treasury income, and
-the pair is what makes `distressedDebt` a well-behaved negative-money term.
+`DistressedDebtAccrued` is symmetric with `InterestAccrued`, which Task 9 already routes
+to the Treasury: the bank's income is Treasury income, and that is what makes
+`distressedDebt` a well-behaved negative-money term.
+
+**`DistressedDebtRepaid` takes no Treasury leg**, and the asymmetry is deliberate. Income
+is recognised once, at accrual. Repayment merely extinguishes an obligation the Treasury
+has already been paid for — cash down, obligation down, net zero. Crediting the Treasury
+again would book the same dollar twice. Task 10's implementer caught this while applying
+the accrual fix; the two events are not mirror images despite their names.
 
 Also update `contexts/credit/decide.ts` and `settleCarryingCost` so an unpayable carrying
 cost emits `ObligationCapitalised { obligation: 'carrying-cost' }` rather than
