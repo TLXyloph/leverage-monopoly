@@ -2,14 +2,18 @@
   "name": "leverage-monopoly",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
-  "engines": { "node": ">=22" },
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc --build",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint packages --ext .ts",
-    "typecheck": "tsc --build --force"
+    "typecheck": "tsc --build --force && tsc -p packages/engine/tsconfig.test.json"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

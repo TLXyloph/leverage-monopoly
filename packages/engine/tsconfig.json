@@ -4,5 +4,12 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  /**
+   * Test and fixture sources are type-checked by `tsconfig.test.json`, never compiled
+   * here: `dist/` was shipping 38 `*.test.js` files plus every `*.fixture.js` and their
+   * `.d.ts`, none of which is part of the engine's published surface. Nothing under
+   * `src/` outside a test imports a fixture, so excluding them cannot break the build.
+   */
+  "exclude": ["src/**/*.test.ts", "src/**/*.fixture.ts", "src/**/fixture.ts"]
 }

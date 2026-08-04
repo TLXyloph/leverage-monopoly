@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /**
+     * Type-checks `tests/` and every `*.test.ts` under `src/`, which the build tsconfig
+     * deliberately excludes. Emits nothing: `noEmit` with `composite: false` means this
+     * project produces no `.js`, no `.d.ts` and no `dist/` entries, so running it cannot
+     * put compiled test files into the published output — which is exactly how 38
+     * `*.test.js` files ended up shipping before.
+     *
+     * Without this, test code was never checked at all: `dispatch.ts` even carries a
+     * comment noting that `tests/` sits outside `include` and that the discipline was
+     * being applied by hand. It is not by hand any more.
+     */
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "references": [{ "path": "./tsconfig.json" }]
+}
