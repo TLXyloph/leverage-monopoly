@@ -1,5 +1,5 @@
 import {
-  GO_TO_JAIL_SQUARE, INCOME_TAX_SQUARE, LUXURY_TAX_SQUARE,
+  GO_TO_JAIL_SQUARE, INCOME_TAX_SQUARE, LUXURY_TAX_SQUARE, deedAt,
 } from '../../config/board.js'
 import { ECONOMY } from '../../config/economy.js'
 import { reject, type Rejection } from '../../core/errors.js'
@@ -9,6 +9,7 @@ import type { DiceRoll, Money, PlayerId, SquareIndex } from '../../core/types.js
 import {
   destination, diceTotal, isDoubles, isLegalDie, passesGo, shortfall,
 } from './selectors.js'
+import { activeFutureOn, rentDue, rentRecipient } from './rent.js'
 
 export type BoardCommand = {
   readonly type: 'roll-dice'
@@ -97,12 +98,11 @@ function capitalise(
   }
 }
 
-/** Task 6 replaces the deed branch of this function with rent resolution. */
 function resolveLanding(
-  _state: GameState,
+  state: GameState,
   player: PlayerId,
   square: SquareIndex,
-  _dice: DiceRoll,
+  dice: DiceRoll,
   ledger: TurnLedger,
 ): readonly GameEvent[] {
   const events: GameEvent[] = []
@@ -120,5 +120,26 @@ function resolveLanding(
     capitalise(events, player, ledger.charge(ECONOMY.LUXURY_TAX), 'tax')
     return events
   }
+
+  const definition = deedAt(square)
+  if (definition === null) return events
+  const deed = state.deeds[definition.id]
+  // Spec 19.2: the owner owes nothing on their own deed.
+  if (deed === undefined || deed.owner === player) return events
+
+  const amount = rentDue(state, definition.id, dice)
+  if (amount <= 0) return events
+  const recipient = rentRecipient(state, definition.id)
+  // Spec 19.2: a futures holder landing on a deed they do not own pays nobody.
+  if (recipient === null || recipient === player) return events
+
+  events.push({ type: 'RentCharged', from: player, to: recipient, deed: definition.id, amount })
+  const contract = activeFutureOn(state, definition.id)
+  if (contract !== null) {
+    events.push({
+      type: 'RentRoutedToFuture', contract: contract.id, holder: contract.holder, amount,
+    })
+  }
+  capitalise(events, player, ledger.charge(amount), 'rent')
   return events
 }
