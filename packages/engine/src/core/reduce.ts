@@ -1,9 +1,11 @@
+import { reduceBoard } from '../contexts/board/index.js'
+import { reduceCredit } from '../contexts/credit/index.js'
 import { initialState, reduceSession } from '../contexts/session/index.js'
 import type { GameEvent } from './events.js'
 import type { GameState } from './state.js'
 
 export function reduce(state: GameState, event: GameEvent): GameState {
-  return reduceSession(state, event)
+  return reduceCredit(reduceBoard(reduceSession(state, event), event), event)
 }
 
 export function replay(events: readonly GameEvent[]): GameState {
