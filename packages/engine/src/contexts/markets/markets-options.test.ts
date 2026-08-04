@@ -4,12 +4,15 @@ import { isRejection } from '../../core/errors.js'
 import type { GameEvent } from '../../core/events.js'
 import type { Rejection } from '../../core/errors.js'
 import type { GameState } from '../../core/state.js'
+import { activeFutureOn } from '../board/index.js'
 import { decideCredit, reduceCredit } from '../credit/index.js'
 import { stJames, testState } from './fixture.js'
 import { decideDeedOptions, deedOptionId, lapseDeedOptions } from './decide-options.js'
+import { reduceMarkets } from './reduce.js'
 import { reduceDeedOptions } from './reduce-options.js'
 import {
   assertDeedTransferable, deedOptionRefund, isDeedLocked, markDeedOption, outstandingOption,
+  rentPayment,
 } from './selectors.js'
 
 function write(over: Record<string, unknown> = {}) {
@@ -312,6 +315,107 @@ describe('liquidation extinguishes an outstanding option (spec 19.12)', () => {
     expect(outstandingOption(after, 'st-james-place')).toBeNull()
     expect(after.deeds['st-james-place']?.owner).toBe('bank')
     expect(after.players.P2.cleanCash).toBe(1060)
+
+    // The extinguished option is fully dead, not merely unlocked: the former holder
+    // cannot come back and exercise it once it no longer exists in state.options.
+    expect(decideDeedOptions(after, {
+      type: 'ExerciseDeedOption', player: 'P2', contract: OPTION.id,
+    })).toMatchObject({ rejected: true, code: 'CONTRACT_NOT_FOUND' })
+  })
+})
+
+/**
+ * The rent-future mirror of the block above. `credit/reduce.ts`'s `EncumbranceExtinguished`
+ * case pays the holder and grows the debtor's drawn balance, but never touched
+ * `state.futures` — so `activeFutureOn`/`rentRecipient` kept finding the "extinguished"
+ * contract and routing rent to the former holder on a deed the auction had already sold
+ * to someone else. This is the interaction that was silently broken; the final assertion
+ * below is the one that failed before `reduceMarkets` grew an `EncumbranceExtinguished`
+ * case of its own.
+ */
+describe('liquidation extinguishes an outstanding rent future (spec 19.12)', () => {
+  // P1 owns only st-james-place and is under an uncured margin call, same shape as the
+  // option fixture above. P2 holds the rent future; P3 is the winning bidder at auction —
+  // a genuinely new owner, not the bank — so a later landing has somewhere real to route.
+  function encumbered(): GameState {
+    const base = testState({
+      round: 7,
+      deeds: { 'st-james-place': stJames('P1') },
+      futures: [{
+        id: 'rf:st-james-place:1-24', deed: 'st-james-place', holder: 'P2', startRound: 1, endRound: 24,
+      }],
+    })
+    return {
+      ...base,
+      players: {
+        ...base.players,
+        P1: { ...base.players.P1, drawnCredit: 200, marginCallFlaggedAt: 5, cleanCash: 0 },
+        P2: { ...base.players.P2, cleanCash: 1000 },
+        P3: { ...base.players.P3, cleanCash: 1000 },
+      },
+    }
+  }
+
+  it('makes the holder whole, adds the amount to the shortfall, and removes the contract', () => {
+    const state = encumbered()
+    expect(activeFutureOn(state, 'st-james-place')?.holder).toBe('P2')
+
+    const events = eventsOf(decideCredit(state, {
+      type: 'SettleLiquidationLot',
+      player: 'P1',
+      deed: 'st-james-place',
+      bids: [{ player: 'P3', amount: 200 }],
+    }, { rentFutureMakeWhole: () => 90, deedOptionRefund }))
+
+    expect(events[0]).toEqual({
+      type: 'EncumbranceExtinguished',
+      player: 'P1',
+      deed: 'st-james-place',
+      contract: 'rf:st-james-place:1-24',
+      kind: 'rent-future',
+      holder: 'P2',
+      amount: 90,
+    })
+    expect(events.some((e) => e.type === 'DeedLiquidated' && e.buyer === 'P3')).toBe(true)
+
+    let after = state
+    for (const event of events) after = reduceMarkets(reduceCredit(after, event), event)
+
+    // the holder was made whole
+    expect(after.players.P2.cleanCash).toBe(1090)
+
+    // THE BUG: the contract must be gone from state.futures, not just paid off
+    expect(after.futures).toEqual([])
+    expect(activeFutureOn(after, 'st-james-place')).toBeNull()
+
+    // the deed now belongs to the auction's winning bidder
+    expect(after.deeds['st-james-place']?.owner).toBe('P3')
+
+    // THE ASSERTION THAT WAS FAILING SILENTLY: a third player landing on the deed now
+    // pays the NEW owner. Before the fix, `rentRecipient` still found the dead contract
+    // and routed here to P2 — a double payment on top of the make-whole above.
+    const payment = rentPayment(after, 'st-james-place', 'P4', 14)
+    expect(payment?.recipient).toBe('P3')
+  })
+
+  it('conserves money across the full liquidation-with-rent-future chain', () => {
+    const state = encumbered()
+    const totalMoney = (s: GameState): number =>
+      Object.values(s.players).reduce((t, p) => t + p.cleanCash - p.drawnCredit - p.distressedDebt, 0)
+      + s.treasury
+    const total = totalMoney(state)
+
+    const events = eventsOf(decideCredit(state, {
+      type: 'SettleLiquidationLot',
+      player: 'P1',
+      deed: 'st-james-place',
+      bids: [{ player: 'P3', amount: 200 }],
+    }, { rentFutureMakeWhole: () => 90, deedOptionRefund }))
+
+    let after = state
+    for (const event of events) after = reduceMarkets(reduceCredit(after, event), event)
+
+    expect(totalMoney(after)).toBe(total)
   })
 })
 

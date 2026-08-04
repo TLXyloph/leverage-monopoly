@@ -86,6 +86,21 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
     case 'RentRoutedToFuture':
       return state
 
+    /**
+     * Spec 19.12. `credit/reduce.ts`'s `EncumbranceExtinguished` case pays the holder
+     * and adds the amount to the debtor's drawn balance, but it never touches
+     * `state.futures`/`state.options` — that removal is markets' job, split by
+     * instrument exactly like every other event here. Skipping this left the contract
+     * alive after liquidation: `activeFutureOn`/`rentRecipient` kept routing rent to the
+     * old holder on a deed the auction had already sold to someone else. `deed-option`
+     * removal already lives in `reduce-options.ts` (Task 15) — delegated to rather than
+     * duplicated here.
+     */
+    case 'EncumbranceExtinguished':
+      return event.kind === 'rent-future'
+        ? { ...state, futures: state.futures.filter((f) => f.id !== event.contract) }
+        : reduceDeedOptions(state, event)
+
     default:
       return reduceDeedOptions(state, event)
   }
