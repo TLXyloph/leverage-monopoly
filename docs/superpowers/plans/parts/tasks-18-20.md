@@ -2867,8 +2867,8 @@ import { deckFor } from './cards/index.js'
 import { entitlementOfKind } from './selectors.js'
 
 export type DeckCommand =
-  | { readonly kind: 'shuffle-deck'; readonly era: Era; readonly order: readonly number[] }
-  | { readonly kind: 'draw-card'; readonly era: Era; readonly player: PlayerId }
+  | { readonly type: 'shuffle-deck'; readonly era: Era; readonly order: readonly number[] }
+  | { readonly type: 'draw-card'; readonly era: Era; readonly player: PlayerId }
   | { readonly kind: 'reorder-deck'; readonly era: Era; readonly player: PlayerId
       readonly order: readonly number[] }
 
@@ -3118,7 +3118,7 @@ export function runFinalSettlement(
 export const SETTLEMENT_STEPS: readonly string[]
 
 // decide.ts — SessionCommand gains one arm
-| { readonly kind: 'settle'; readonly input: SettlementInput }
+| { readonly type: 'settle'; readonly input: SettlementInput }
 ```
 
 ---
@@ -4337,8 +4337,8 @@ import { runFinalSettlement, runSettlement } from './settlement.js'
 import { ECONOMY } from '../../config/economy.js'
 
 export type SessionCommand =
-  | { readonly kind: 'advance-phase' }
-  | { readonly kind: 'settle'; readonly input: SettlementInput }
+  | { readonly type: 'advance-phase' }
+  | { readonly type: 'settle'; readonly input: SettlementInput }
 
 // ... inside decideSession, before the advance-phase handling:
   if (command.kind === 'settle') {
@@ -5534,7 +5534,7 @@ class Run {
   }
 
   advance(label: string): void {
-    this.submit(label, decideSession(this.state, { kind: 'advance-phase' }))
+    this.submit(label, decideSession(this.state, { type: 'advance-phase' }))
   }
 }
 
@@ -5559,12 +5559,12 @@ function runDraft(run: Run, script: readonly ScriptedDraftRound[]): void {
       const face = first === undefined ? 0 : run.state.deeds[first]?.faceValue ?? 0
       const pct = scripted?.bidPercents[i] ?? 110
       run.submit(`draft:${player}`, decideDraft(run.state, {
-        kind: 'submit-draft', player,
+        type: 'submit-draft', player,
         ranked: [ranked[0] ?? '', ranked[1] ?? '', ranked[2] ?? ''],
         maxBid: Math.floor((face * pct) / 100),
       }))
     })
-    run.submit('draft:resolve', decideDraft(run.state, { kind: 'resolve-draft-round' }))
+    run.submit('draft:resolve', decideDraft(run.state, { type: 'resolve-draft-round' }))
   }
 }
 
@@ -5586,17 +5586,17 @@ function runRound(run: Run, round: ScriptedRound): void {
   run.advance('open->movement')
   run.state.config.turnOrder.forEach((player, i) => {
     const dice: DiceRoll = round.rolls[i] ?? [1, 2]
-    run.submit(`roll:${player}`, decideBoard(run.state, { kind: 'roll-dice', player, dice }))
+    run.submit(`roll:${player}`, decideBoard(run.state, { type: 'roll-dice', player, dice }))
     if (round.drawCard && i === 0) {
       run.submit('draw-card', decideDeck(run.state, {
-        kind: 'draw-card', era: run.state.era, player,
+        type: 'draw-card', era: run.state.era, player,
       }))
     }
   })
 
   run.advance('movement->settlement')
   run.submit('settle', decideSession(run.state, {
-    kind: 'settle',
+    type: 'settle',
     input: {
       auditDice: round.auditDice,
       roundEvents: run.batches.slice(marker).flatMap((b) => b.events),
@@ -5609,7 +5609,7 @@ export function runScript(script: GameScript): Trace {
   const run = new Run(replay(createGame(script.config)))
   for (const era of [1, 2, 3, 4] as const) {
     run.submit(`shuffle:${era}`, decideDeck(run.state, {
-      kind: 'shuffle-deck', era, order: script.shuffles[era],
+      type: 'shuffle-deck', era, order: script.shuffles[era],
     }))
   }
   run.advance('setup->draft')

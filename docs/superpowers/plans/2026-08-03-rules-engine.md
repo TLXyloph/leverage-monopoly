@@ -1018,7 +1018,8 @@ silently corrupt state.** Resolve every one before starting Task 1.
 |---|---|---|
 | 1 | `core/money.ts` is created twice — Task 2 Step 2 with `floorPercent`, Task 9 Step 1 with `applyRate`. Whichever lands second overwrites the first. | **Delete `applyRate`.** Task 2's basis-point implementation is canonical. Task 20 Step 6 performs the sweep. |
 | 2 | Task 3 Step 4 writes `Math.floor(standardHouseCost * HOUSE_COST_MULTIPLIER)` — the exact pattern the global constraint bans. Values happen to be integral at 0.9, so it passes today. | Rewrite as `floorPercent(...)`. A retune to 0.85 would otherwise underpay silently. |
-| 3 | Commands split their discriminant: some contexts use `type`, others `kind`. A root `decide` cannot dispatch across both. | **`type` everywhere.** Migrate the four `kind`-based command unions. |
+| 3 | Commands split their discriminant: some contexts use `type`, others `kind`. A root `decide` cannot dispatch across both. | **RESOLVED.** `type` everywhere. Fixed in code at Task 4 and across all plan parts. Data variants (`Target.kind`, `CardEffect.kind`, `Tranche.kind`, `BriberyEffect.kind`, `SquareKind`, and Task 20's `ScriptedAction.kind` test DSL) legitimately keep `kind` — they are payload unions, not commands. |
+| 3b | `core/commands.ts` is listed in the plan's file structure but no task creates it. Without it there is no root `Command` union and no root `decide`. | **Task 19 owns it.** It already composes the Settlement fold and touches the root reducer. It creates `core/commands.ts` unioning every context's exported command type, plus a root `decide(state, command)` dispatching on `type`. |
 | 4 | Two export-name collisions on the package surface: `prevailingRate` in both `session` and `credit`; `rentRecipient` in both `board` and `markets`. | Keep `prevailingRate` in `session`, `rentRecipient` in `markets`; the other two become internal. |
 | 5 | `RejectionCode` is extended independently by five tasks, and `SWAP_NOTIONAL_EXCEEDS_FACE` is referenced but declared nowhere. | All codes live in Task 2's union. Add the missing one. |
 | 6 | `isWholeDollars` is imported by Task 9 and defined by Task 20. | Move the definition to `core/money.ts` in Task 2. |
@@ -1055,6 +1056,16 @@ one is a change to a specific reducer, not a cross-file collision.
 | 19 | `session` | Scoring, mark-to-model, win conditions | `parts/tasks-18-20.md` |
 | 20 | tests | Property-based invariants | `parts/tasks-18-20.md` |
 | 21 | `board` | Building, mortgaging, trading | `parts/tasks-21.md` |
+
+**Task 20 must be extended to cover Task 21.** Task 20's fast-check generator was
+authored before Task 21 existed and deliberately excludes building, mortgaging and
+trading — its own coverage statement records this as "no task owns these deciders."
+Task 21 now does. Unless Task 20's `ScriptedAction` union gains arms for
+`build-house`, `sell-house`, `mortgage-deed`, `unmortgage-deed` and `trade-deeds`,
+**no property test constrains the even-build rule, the 32-house/12-hotel supply, or
+mortgage economics** — and those interact directly with money conservation, since
+buildings advance 50% of cost into the borrowing base and return 50% in cash.
+Execute Task 21 BEFORE Task 20, per the order below.
 
 **Execution order.** Tasks 1–2 first and serially — they define the contract. Then
 3, 4, 5, 6, 7, 8 (board and draft), then 9, 10, 11 (credit), then 12, 13

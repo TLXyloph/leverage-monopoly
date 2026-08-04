@@ -126,6 +126,28 @@ export const ECONOMY = {
 
 type RoundNumberLiteral = number
 
+/**
+ * Spec section 5: LIQUIDATION_FLOOR must be strictly greater than DEED_ADVANCE_RATE.
+ *
+ * A forced sale raises LIQUIDATION_FLOOR x face in cash but removes DEED_ADVANCE_RATE x
+ * face from the borrowing base. If the floor were the lower of the two, every forced sale
+ * would WIDEN the shortfall — at a 70% floor against a 75% advance rate each sale makes
+ * the position 5% of face worse — and the auction would terminate only by consuming the
+ * player's entire portfolio, leaving them worse off than when it began. At 80% against
+ * 75% each sale narrows the shortfall by 5% of face and liquidation converges.
+ *
+ * This invariant was violated in an earlier draft of the spec. These two constants must
+ * never be tuned independently again, which is what this assertion guarantees. A
+ * module-level throw is permitted here: it is deterministic, performs no I/O, and reads
+ * no clock, so it does not weaken the engine's purity guarantees.
+ */
+if (ECONOMY.LIQUIDATION_FLOOR <= ECONOMY.DEED_ADVANCE_RATE) {
+  throw new Error(
+    `LIQUIDATION_FLOOR (${ECONOMY.LIQUIDATION_FLOOR}) must exceed DEED_ADVANCE_RATE ` +
+      `(${ECONOMY.DEED_ADVANCE_RATE}) or forced liquidation diverges. See spec section 5.`,
+  )
+}
+
 /** Ratings bands, evaluated highest first. Spec section 8. */
 export const RATING_BANDS: readonly (readonly [number, string])[] = [
   [2.2, 'AAA'], [1.5, 'AA'], [1.2, 'A'],

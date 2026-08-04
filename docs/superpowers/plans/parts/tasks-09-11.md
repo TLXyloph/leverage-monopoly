@@ -3775,11 +3775,10 @@ belong to the basis-point family.
 | `BUILDING_SELLBACK_RATE` | `0.5` | 9, 2 |
 | `PEER_LOAN_UNLOCK_ERA` | `2` | 11, 2 |
 
-`LIQUIDATION_FLOOR` moves from `0.7` to `0.8` in Task 9 Step 2, under a startup assertion
-that it strictly exceeds `DEED_ADVANCE_RATE`. **Task 16's worked examples still show the
-0.7 figures** (`floorPercent(180, 0.7) = 126`); those expected values must be recomputed at
-`0.8` when the two branches merge, or `securitization` and `credit` will price the same
-spec 19.4 conversion differently.
+`LIQUIDATION_FLOOR` is `0.8`, under a startup assertion that it strictly exceeds
+`DEED_ADVANCE_RATE` (0.75). **RESOLVED:** Task 16's worked examples have been recomputed
+at `0.8` — two $180 deeds now yield $288 (was $252) and Boardwalk yields $320 (was $280),
+so `securitization` and `credit` price the spec 19.4 conversion identically.
 
 ### Symbols required from sibling tasks, to reconcile at merge
 

@@ -987,10 +987,10 @@ describe('reducer', () => {
     })
     const next = reduceSecuritization(state, {
       type: 'PoolCollateralLiquidated', poolId: 'pool-1', loanId: 'l-1',
-      deeds: ['boardwalk'], proceeds: 280,
+      deeds: ['boardwalk'], proceeds: 320, // floorPercent(400, LIQUIDATION_FLOOR=0.8)
     })
     expect(next.deeds['boardwalk']?.owner).toBe('bank')
-    expect(next.players.P1.cleanCash).toBe(1280)
+    expect(next.players.P1.cleanCash).toBe(1320)
   })
 
   it('marks a pool terminated', () => {

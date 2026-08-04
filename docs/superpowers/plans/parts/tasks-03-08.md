@@ -449,7 +449,7 @@ of standard via ECONOMY.HOUSE_COST_MULTIPLIER, giving exact integers."
   - `function initialState(config: GameConfig): GameState`
   - `function reduceSession(state: GameState, event: GameEvent): GameState`
   - `function createGame(config: GameConfig): readonly GameEvent[]`
-  - `type SessionCommand = { readonly kind: 'advance-phase' }`
+  - `type SessionCommand = { readonly type: 'advance-phase' }`
   - `function decideSession(state: GameState, command: SessionCommand): readonly GameEvent[] | Rejection`
   - `function reduce(state: GameState, event: GameEvent): GameState` and `function replay(events: readonly GameEvent[]): GameState` in `core/reduce.ts`
 
@@ -477,7 +477,7 @@ const CONFIG: GameConfig = {
 }
 
 function events(state: GameState): readonly GameEvent[] {
-  const result = decideSession(state, { kind: 'advance-phase' })
+  const result = decideSession(state, { type: 'advance-phase' })
   if (isRejection(result)) throw new Error(result.message)
   return result
 }
@@ -592,7 +592,7 @@ describe('phase and round advancement', () => {
       phase: 'draft',
       draft: { round: 3, submissions: [], complete: false },
     }
-    const result = decideSession(state, { kind: 'advance-phase' })
+    const result = decideSession(state, { type: 'advance-phase' })
     expect(isRejection(result) && result.code).toBe('WRONG_PHASE')
   })
 
@@ -601,7 +601,7 @@ describe('phase and round advancement', () => {
       ...replay([{ type: 'GameCreated', config: CONFIG }]),
       phase: 'complete',
     }
-    expect(isRejection(decideSession(state, { kind: 'advance-phase' }))).toBe(true)
+    expect(isRejection(decideSession(state, { type: 'advance-phase' }))).toBe(true)
   })
 })
 
@@ -796,7 +796,7 @@ import type { Phase } from '../../core/types.js'
 import { reject, type Rejection } from '../../core/errors.js'
 import { eraForRound } from './selectors.js'
 
-export type SessionCommand = { readonly kind: 'advance-phase' }
+export type SessionCommand = { readonly type: 'advance-phase' }
 
 /** Bootstraps a game. Emitted before any state exists, so it takes no state. */
 export function createGame(config: GameConfig): readonly GameEvent[] {
@@ -929,7 +929,7 @@ asserted directly. unlockMode 'all' bypasses gating entirely."
   - `function passesGo(from: SquareIndex, total: number): boolean`
   - `function shortfall(cash: Money, amount: Money): Money`
   - `function reduceBoard(state: GameState, event: GameEvent): GameState`
-  - `type BoardCommand = { readonly kind: 'roll-dice'; readonly player: PlayerId; readonly dice: DiceRoll }`
+  - `type BoardCommand = { readonly type: 'roll-dice'; readonly player: PlayerId; readonly dice: DiceRoll }`
   - `function decideBoard(state: GameState, command: BoardCommand): readonly GameEvent[] | Rejection`
   - `function reduceCredit(state: GameState, event: GameEvent): GameState` handling `ObligationCapitalised`
 
@@ -989,7 +989,7 @@ function movementState(overrides: Partial<GameState['players']['P1']> = {}): Gam
 }
 
 function roll(state: GameState, dice: DiceRoll, player: PlayerId = 'P1'): readonly GameEvent[] {
-  const result = decideBoard(state, { kind: 'roll-dice', player, dice })
+  const result = decideBoard(state, { type: 'roll-dice', player, dice })
   if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
   return result
 }
@@ -1145,13 +1145,13 @@ describe('jail', () => {
 describe('validation', () => {
   it('refuses a roll outside the movement phase', () => {
     const state = { ...movementState(), phase: 'open' as const }
-    const result = decideBoard(state, { kind: 'roll-dice', player: 'P1', dice: [1, 1] })
+    const result = decideBoard(state, { type: 'roll-dice', player: 'P1', dice: [1, 1] })
     expect(isRejection(result) && result.code).toBe('WRONG_PHASE')
   })
 
   it('refuses dice outside 1-6', () => {
     const result = decideBoard(movementState(), {
-      kind: 'roll-dice', player: 'P1', dice: [0, 7],
+      type: 'roll-dice', player: 'P1', dice: [0, 7],
     })
     expect(isRejection(result) && result.code).toBe('INVALID_DICE')
   })
@@ -1306,7 +1306,7 @@ import {
 } from './selectors.js'
 
 export type BoardCommand = {
-  readonly kind: 'roll-dice'
+  readonly type: 'roll-dice'
   readonly player: PlayerId
   readonly dice: DiceRoll
 }
@@ -1693,7 +1693,7 @@ describe('who pays and who receives', () => {
       ...state,
       players: { ...state.players, [player]: { ...state.players[player], position: from } },
     }
-    const result = decideBoard(seeded, { kind: 'roll-dice', player, dice })
+    const result = decideBoard(seeded, { type: 'roll-dice', player, dice })
     if (isRejection(result)) throw new Error(result.message)
     return { seeded, events: result }
   }
@@ -2298,7 +2298,7 @@ The context splits into `selectors.ts`, `reduce.ts`, `decide.ts` and
   - `function turnIndex(state: GameState, player: PlayerId): number`
   - `function resolveDraftRound(state: GameState): readonly GameEvent[]`
   - `function reduceDraft(state: GameState, event: GameEvent): GameState`
-  - `type DraftCommand = { kind: 'submit-draft'; player; ranked: readonly [DeedId, DeedId, DeedId]; maxBid: Money } | { kind: 'resolve-draft-round' }`
+  - `type DraftCommand = { type: 'submit-draft'; player; ranked: readonly [DeedId, DeedId, DeedId]; maxBid: Money } | { type: 'resolve-draft-round' }`
   - `function decideDraft(state: GameState, command: DraftCommand): readonly GameEvent[] | Rejection`
 
 - [ ] **Step 1: Write the failing test for submission validation and rules 1-2**
@@ -2338,13 +2338,13 @@ function submit(
   ranked: readonly [DeedId, DeedId, DeedId],
   maxBid: Money = face(ranked[0]),
 ): GameState {
-  const result = decideDraft(state, { kind: 'submit-draft', player, ranked, maxBid })
+  const result = decideDraft(state, { type: 'submit-draft', player, ranked, maxBid })
   if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
   return result.reduce(reduce, state)
 }
 
 function resolve(state: GameState): readonly GameEvent[] {
-  const result = decideDraft(state, { kind: 'resolve-draft-round' })
+  const result = decideDraft(state, { type: 'resolve-draft-round' })
   if (isRejection(result)) throw new Error(`${result.code}: ${result.message}`)
   return result
 }
@@ -2365,7 +2365,7 @@ describe('submission validation', () => {
 
   it('rejects a bid below the first choice face value', () => {
     const result = decideDraft(draftState(), {
-      kind: 'submit-draft', player: 'P1',
+      type: 'submit-draft', player: 'P1',
       ranked: ['boardwalk', 'park-place', 'short-line'], maxBid: 399,
     })
     expect(isRejection(result) && result.code).toBe('BID_BELOW_FACE')
@@ -2373,7 +2373,7 @@ describe('submission validation', () => {
 
   it('rejects a bid above the remaining budget', () => {
     const result = decideDraft(draftState(), {
-      kind: 'submit-draft', player: 'P1',
+      type: 'submit-draft', player: 'P1',
       ranked: ['boardwalk', 'park-place', 'short-line'],
       maxBid: ECONOMY.STARTING_CASH + 1,
     })
@@ -2387,7 +2387,7 @@ describe('submission validation', () => {
       deeds: { ...base.deeds, boardwalk: { ...base.deeds.boardwalk, owner: 'P4' } },
     }
     const result = decideDraft(taken, {
-      kind: 'submit-draft', player: 'P1',
+      type: 'submit-draft', player: 'P1',
       ranked: ['boardwalk', 'park-place', 'short-line'], maxBid: 400,
     })
     expect(isRejection(result) && result.code).toBe('DEED_UNAVAILABLE')
@@ -2395,7 +2395,7 @@ describe('submission validation', () => {
 
   it('rejects a duplicated deed inside the triple', () => {
     const result = decideDraft(draftState(), {
-      kind: 'submit-draft', player: 'P1',
+      type: 'submit-draft', player: 'P1',
       ranked: ['boardwalk', 'boardwalk', 'short-line'], maxBid: 400,
     })
     expect(isRejection(result) && result.code).toBe('DEED_UNAVAILABLE')
@@ -2404,7 +2404,7 @@ describe('submission validation', () => {
   it('rejects a second submission in the same round', () => {
     const state = submit(draftState(), 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
     const result = decideDraft(state, {
-      kind: 'submit-draft', player: 'P1',
+      type: 'submit-draft', player: 'P1',
       ranked: ['illinois-avenue', 'park-place', 'short-line'], maxBid: 240,
     })
     expect(isRejection(result) && result.code).toBe('ALREADY_SUBMITTED')
@@ -2412,7 +2412,7 @@ describe('submission validation', () => {
 
   it('refuses to resolve before all four have submitted', () => {
     const state = submit(draftState(), 'P1', ['boardwalk', 'park-place', 'short-line'], 400)
-    const result = decideDraft(state, { kind: 'resolve-draft-round' })
+    const result = decideDraft(state, { type: 'resolve-draft-round' })
     expect(isRejection(result)).toBe(true)
   })
 })
@@ -2868,12 +2868,12 @@ import {
 
 export type DraftCommand =
   | {
-      readonly kind: 'submit-draft'
+      readonly type: 'submit-draft'
       readonly player: PlayerId
       readonly ranked: readonly [DeedId, DeedId, DeedId]
       readonly maxBid: Money
     }
-  | { readonly kind: 'resolve-draft-round' }
+  | { readonly type: 'resolve-draft-round' }
 
 export function decideDraft(
   state: GameState,
