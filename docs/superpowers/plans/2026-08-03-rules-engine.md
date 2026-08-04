@@ -210,7 +210,7 @@ contexts/<name>/
           "error",
           {
             "patterns": [
-              { "group": ["**/contexts/*/*"], "message": "Import a context only through its index.ts." },
+              { "group": ["**/contexts/*/*", "!**/contexts/*/index.js"], "message": "Import a context only through its index.ts." },
               { "group": ["node:*", "fs", "path", "crypto"], "message": "The engine performs no I/O." }
             ]
           }
@@ -404,6 +404,11 @@ export function ceilPercent(amount: Money, rate: number): Money {
 export function floorPercentSum(amount: Money, rates: readonly number[]): Money {
   const bp = rates.reduce((acc, r) => acc + toBasisPoints(r), 0)
   return Math.floor((amount * bp) / 10_000)
+}
+
+/** All money is integer dollars. Used by the property suite and by boundary validation. */
+export function isWholeDollars(amount: number): boolean {
+  return Number.isInteger(amount)
 }
 ```
 
@@ -650,6 +655,8 @@ export interface DeedOption {
   readonly deed: DeedId
   readonly writer: PlayerId
   readonly holder: PlayerId
+  /** Paid at origination. Refunded to the holder if the deed is force-liquidated. */
+  readonly premium: Money
   readonly strike: Money
   readonly expiry: RoundNumber
 }
@@ -753,7 +760,9 @@ export type RejectionCode =
   | 'POOL_NEEDS_THREE_ASSETS' | 'TRANCHES_EXCEED_POOL' | 'NOT_ASSET_OWNER'
   | 'INVALID_DICE' | 'VENTURE_ALREADY_ACTIVE' | 'INVALID_BRIBERY_TARGET'
   | 'SELF_DEALING' | 'NEGATIVE_AMOUNT' | 'DUPLICATE_CONTRACT_ID'
-  | 'ASSET_IN_LIVE_POOL'
+  | 'ASSET_IN_LIVE_POOL' | 'ASSET_ALREADY_POOLED' | 'INVALID_LOAN_TERMS'
+  | 'SWAP_NOTIONAL_EXCEEDS_FACE' | 'NO_HOTELS_REMAINING' | 'DEED_DEVELOPED'
+  | 'NOT_BUILDABLE' | 'TRADE_NOT_CONFIRMED'
 
 export interface Rejection {
   readonly rejected: true
@@ -999,11 +1008,59 @@ against the simulated configuration from spec section 4."
 
 ---
 
-## Remaining tasks
+## Merge reconciliation — resolve these BEFORE executing any task
 
-Tasks 3 through 19 cover the seven bounded contexts, the card interpreter, scoring,
-and the property-based invariant suite. They are authored against the contract
-established above and appended to this document.
+The task parts were authored in parallel against the contract above. Review found the
+following collisions between them. **Each is a real defect that will fail the build or
+silently corrupt state.** Resolve every one before starting Task 1.
+
+| # | Defect | Resolution |
+|---|---|---|
+| 1 | `core/money.ts` is created twice — Task 2 Step 2 with `floorPercent`, Task 9 Step 1 with `applyRate`. Whichever lands second overwrites the first. | **Delete `applyRate`.** Task 2's basis-point implementation is canonical. Task 20 Step 6 performs the sweep. |
+| 2 | Task 3 Step 4 writes `Math.floor(standardHouseCost * HOUSE_COST_MULTIPLIER)` — the exact pattern the global constraint bans. Values happen to be integral at 0.9, so it passes today. | Rewrite as `floorPercent(...)`. A retune to 0.85 would otherwise underpay silently. |
+| 3 | Commands split their discriminant: some contexts use `type`, others `kind`. A root `decide` cannot dispatch across both. | **`type` everywhere.** Migrate the four `kind`-based command unions. |
+| 4 | Two export-name collisions on the package surface: `prevailingRate` in both `session` and `credit`; `rentRecipient` in both `board` and `markets`. | Keep `prevailingRate` in `session`, `rentRecipient` in `markets`; the other two become internal. |
+| 5 | `RejectionCode` is extended independently by five tasks, and `SWAP_NOTIONAL_EXCEEDS_FACE` is referenced but declared nowhere. | All codes live in Task 2's union. Add the missing one. |
+| 6 | `isWholeDollars` is imported by Task 9 and defined by Task 20. | Move the definition to `core/money.ts` in Task 2. |
+| 7 | Both `credit` and `session` define a `settlement.ts`. | Rename `credit`'s to `credit-settlement.ts`. Spec 19.1's ordering is owned by `session`. |
+| 8 | Task 10 references a "NEW STATE FIELDS REQUIRED" section that does not exist; it needs `DeedOption.premium`, which `markets` owns. | Add `premium: Money` to `DeedOption` in `core/state.ts`. |
+| 9 | Task 16's interface comment describes `creditHeadroom` as floored at zero; Task 10 needs it signed. | Return signed. Callers clamp. |
+| 10 | Circular import risk: `markets` imports `board`, and `board`'s property actions need `markets` for make-whole and transferability. | Task 21's `PropertyPorts` injection, mirroring Task 9's `CreditPorts`. Do not import directly. |
+
+Ten reducer defects in money conservation were found while authoring Task 20's ledger
+and are fixed by its Steps 18–19. They are listed there rather than here because each
+one is a change to a specific reducer, not a cross-file collision.
+
+## Task index
+
+| Task | Context | Deliverable | Part file |
+|---|---|---|---|
+| 1–2 | — | Scaffold, CI, core types, event schema, `core/money.ts` | this file |
+| 3 | `config` | 40 squares, 28 deeds, rent tables | `parts/tasks-03-08.md` |
+| 4 | `session` | Phases, rounds, eras, instrument gating | `parts/tasks-03-08.md` |
+| 5 | `board` | Movement, jail, doubles, GO, taxes | `parts/tasks-03-08.md` |
+| 6 | `board` | Rent: groups, railroads, utilities | `parts/tasks-03-08.md` |
+| 7 | `board` | Markov landing model vs golden fixture | `parts/tasks-03-08.md` |
+| 8 | `draft` | Ranked-triple submission and resolution | `parts/tasks-03-08.md` |
+| 9 | `credit` | Base, draws, interest, carrying cost, stimulus | `parts/tasks-09-11.md` |
+| 10 | `credit` | Margin calls, liquidation, distressed debt | `parts/tasks-09-11.md` |
+| 11 | `credit` | Peer loans, default, note transfer | `parts/tasks-09-11.md` |
+| 12 | `underworld` | Ventures, dirty cash, speakeasy | `parts/tasks-12-13.md` |
+| 13 | `underworld` | Heat, laundering, audits, bribery | `parts/tasks-12-13.md` |
+| 14 | `markets` | Rent futures, encumbrance, valuation | `parts/tasks-14-15.md` |
+| 15 | `markets` | Deed options | `parts/tasks-14-15.md` |
+| 16 | `securitization` | Pools, tranches, waterfall | `parts/tasks-16-17.md` |
+| 17 | `securitization` | Ratings formula, CDS | `parts/tasks-16-17.md` |
+| 18 | `decks` | Card effect interpreter, 80 cards | `parts/tasks-18-20.md` |
+| 19 | `session` | Scoring, mark-to-model, win conditions | `parts/tasks-18-20.md` |
+| 20 | tests | Property-based invariants | `parts/tasks-18-20.md` |
+| 21 | `board` | Building, mortgaging, trading | `parts/tasks-21.md` |
+
+**Execution order.** Tasks 1–2 first and serially — they define the contract. Then
+3, 4, 5, 6, 7, 8 (board and draft), then 9, 10, 11 (credit), then 12, 13
+(underworld), then 14, 15 (markets), then 21 (property actions, needs both board and
+markets), then 16, 17 (securitization), then 18, 19, and 20 last — the property suite
+exercises everything.
 
 | Task | Context | Deliverable |
 |---|---|---|
