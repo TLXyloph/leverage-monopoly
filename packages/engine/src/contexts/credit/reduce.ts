@@ -115,14 +115,23 @@ export function reduceCredit(state: GameState, event: GameEvent): GameState {
       return withPlayer(state, event.player, { marginCallFlaggedAt: null })
 
     /**
-     * Settlement step 8, spec 19.7. Compounding interest on distressed debt. Deliberately
-     * touches neither clean cash nor the Treasury — see `settleDistressedDebt`'s doc
-     * comment for why this is the one place `credit` does not preserve the conservation
-     * identity: the accrual is a scoring penalty, not a transfer.
+     * Settlement step 8, spec 19.7. Compounding interest on distressed debt. Accrued
+     * interest the player has not yet paid is still Treasury income — symmetric with
+     * `InterestAccrued` above, which credits the Treasury the moment interest accrues
+     * rather than waiting for cash to actually move. The Treasury credit is what keeps
+     * `distressedDebt` a well-behaved negative-money term in the conservation identity:
+     * `distressedDebt` rises by `event.amount` (subtracted in the identity, so it falls
+     * by `event.amount` on its own), and crediting the Treasury the same amount restores
+     * the balance exactly. No cash moves and no player is worse off in clean cash terms
+     * here; the 15% rate and the scoring deduction are what make the debt a penalty, not
+     * an omitted counterparty.
      */
     case 'DistressedDebtAccrued': {
       const p = state.players[event.player]
-      return withPlayer(state, event.player, { distressedDebt: p.distressedDebt + event.amount })
+      const next = withPlayer(state, event.player, {
+        distressedDebt: p.distressedDebt + event.amount,
+      })
+      return { ...next, treasury: next.treasury + event.amount }
     }
 
     case 'DistressedDebtRepaid': {

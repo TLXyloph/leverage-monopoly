@@ -88,11 +88,12 @@ export function settleCreditInterest(state: GameState): readonly GameEvent[] {
  * Settlement step 8. Spec 19.7: DISTRESSED_DEBT_RATE per round, COMPOUNDING, floored.
  * Compounding falls out of applying the rate to the running balance rather than to the
  * original principal. Never swept from spare clean cash — repayment is the player's
- * choice during any Open phase, and the compounding is the pressure. Deliberately not
- * paid to the Treasury or to any player: distressed debt is a scoring penalty (spec
- * section 5's "you carry a wound that compounds"), not a transfer, so this is the one
- * place in `credit` where the conservation identity in spec section 20 is not meant to
- * hold — the accrual is money leaving the system, exactly as the design intends.
+ * choice during any Open phase, and the compounding is the pressure. The 15% rate and
+ * the scoring-time deduction of `distressedDebt` from net worth are what make this a
+ * penalty; the reducer still gives every dollar of it a counterparty (the Treasury),
+ * symmetric with `InterestAccrued`, so the conservation identity in spec section 20
+ * holds across this event with no exception. This emitter only computes the amount —
+ * see `reduceCredit`'s `DistressedDebtAccrued` case for the Treasury credit.
  */
 export function settleDistressedDebt(state: GameState): readonly GameEvent[] {
   const events: GameEvent[] = []

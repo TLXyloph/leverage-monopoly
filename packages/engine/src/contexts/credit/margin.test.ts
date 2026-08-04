@@ -14,8 +14,8 @@ import {
 /**
  * sum(cleanCash) - sum(drawnCredit) - sum(distressedDebt) + treasury. Mirrors
  * `credit.test.ts`'s identically-named helper exactly, so both files read the identity
- * the same way. `DistressedDebtAccrued` is the one event in this file that deliberately
- * moves this figure — see the "money conservation" describe block at the bottom.
+ * the same way. Every event in this file — including `DistressedDebtAccrued` — leaves
+ * this figure invariant; see the "money conservation" describe block at the bottom.
  */
 function totalMoney(state: GameState): number {
   return (
@@ -407,12 +407,12 @@ describe('distressed debt (spec 5, 19.7 and 19.8)', () => {
     expect(ECONOMY.DISTRESSED_DEBT_RATE).toBe(0.15)
   })
 
-  it('is never swept from spare clean cash at Settlement', () => {
+  it('is never swept from spare clean cash at Settlement, even though the Treasury still accrues it', () => {
     const rich = withPlayers(gameState(), { P1: { cleanCash: 5000, distressedDebt: 200 } })
     const after = applyAll(rich, settleDistressedDebt(rich))
-    expect(after.players.P1.cleanCash).toBe(5000)
+    expect(after.players.P1.cleanCash).toBe(5000) // spare cash is never touched
     expect(after.players.P1.distressedDebt).toBe(230)
-    expect(after.treasury).toBe(0)
+    expect(after.treasury).toBe(30) // accrued interest is Treasury income, symmetric with InterestAccrued
   })
 
   it('emits nothing for a player carrying none', () => {
@@ -554,12 +554,16 @@ describe('money conservation across liquidation (spec section 20)', () => {
     expect(totalMoney(wound)).toBe(baseline)
   })
 
-  it('does NOT conserve money through distressed-debt compounding, deliberately', () => {
-    // The one designed exception: distressed debt is a scoring penalty (spec section 5's
-    // "you carry a wound that compounds"), not a transfer, so nothing is credited for it.
+  it('conserves money through distressed-debt compounding: accrued interest is Treasury income', () => {
+    // Symmetric with InterestAccrued (Task 9): the bank recognises accrued interest as
+    // income the moment it accrues, not only once cash physically changes hands. The
+    // 15% rate and its deduction from net worth at scoring are what make distressed debt
+    // a penalty — the identity itself carries no carve-out.
     const s = withPlayers(gameState(), { P1: { distressedDebt: 100 } })
     const baseline = totalMoney(s)
     const after = applyAll(s, settleDistressedDebt(s))
-    expect(totalMoney(after)).toBe(baseline - 15)
+    expect(after.treasury).toBe(15)
+    expect(after.players.P1.distressedDebt).toBe(115)
+    expect(totalMoney(after)).toBe(baseline)
   })
 })
