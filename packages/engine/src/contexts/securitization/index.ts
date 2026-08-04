@@ -12,5 +12,17 @@ export {
 
 export { reduceSecuritization } from './reduce.js'
 
-export type { CreatePoolCommand, SecuritizationCommand, SellTrancheCommand } from './decide.js'
+export type { RatingInputs, TrancheRating } from './ratings.js'
+export {
+  borrowerLeverage, obligorConcentration, ratePool, rateTranche, ratingForScore,
+  ratingFrom, scoreFrom, weightedBorrowerLeverage,
+} from './ratings.js'
+
+export {
+  loanCreditEvents, referenceFace, requiredCollateral, settleSwapPremiums, trancheCreditEvents,
+} from './swaps.js'
+
+export type {
+  CreatePoolCommand, SecuritizationCommand, SellTrancheCommand, WriteSwapCommand,
+} from './decide.js'
 export { decideSecuritization } from './decide.js'

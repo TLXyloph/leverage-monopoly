@@ -1,11 +1,12 @@
 import type { ContractId, Money, PlayerId } from '../../core/types.js'
-import type { GameState, Pool, PoolAssetRef, Tranche } from '../../core/state.js'
+import type { GameState, Pool, PoolAssetRef, SwapReference, Tranche } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { ECONOMY } from '../../config/economy.js'
 import { reject, type Rejection } from '../../core/errors.js'
 import { isWholeDollars } from '../../core/money.js'
-import { findPeerLoan } from '../credit/index.js'
+import { creditHeadroom, findPeerLoan } from '../credit/index.js'
 import { assetKey, expectedPoolCashflow, findPool, pooledAssetKeys, trancheOf } from './selectors.js'
+import { referenceFace, requiredCollateral } from './swaps.js'
 
 /** Contract ids are supplied by the caller; the engine generates nothing random. */
 export interface CreatePoolCommand {
@@ -26,17 +27,27 @@ export interface SellTrancheCommand {
   readonly price: Money
 }
 
-export type SecuritizationCommand = CreatePoolCommand | SellTrancheCommand
+export interface WriteSwapCommand {
+  readonly type: 'WriteSwap'
+  readonly swapId: ContractId
+  readonly buyer: PlayerId
+  readonly seller: PlayerId
+  readonly reference: SwapReference
+  readonly notional: Money
+  readonly premiumPerRound: Money
+}
+
+export type SecuritizationCommand = CreatePoolCommand | SellTrancheCommand | WriteSwapCommand
 
 /**
- * Spec section 2: CDOs unlock in Era III. Inlined against `ECONOMY.UNLOCK_ERA` rather
- * than through `session`'s `isUnlocked` — spec section 14's dependency table lists
- * `securitization`'s allowed dependencies as exactly `credit` and `markets`, not
- * `session` — the same resolution `credit/decide-loans.ts` and `markets/decide.ts`
- * take for their own instruments.
+ * Spec section 2: CDOs and CDS both unlock in Era III. Inlined against
+ * `ECONOMY.UNLOCK_ERA` rather than through `session`'s `isUnlocked` — spec section 14's
+ * dependency table lists `securitization`'s allowed dependencies as exactly `credit`
+ * and `markets`, not `session` — the same resolution `credit/decide-loans.ts` and
+ * `markets/decide.ts` take for their own instruments.
  */
-function locked(state: GameState): boolean {
-  return state.config.unlockMode !== 'all' && state.era < ECONOMY.UNLOCK_ERA.cdo
+function locked(state: GameState, instrument: 'cdo' | 'cds'): boolean {
+  return state.config.unlockMode !== 'all' && state.era < ECONOMY.UNLOCK_ERA[instrument]
 }
 
 function ownsAsset(state: GameState, player: PlayerId, ref: PoolAssetRef): boolean {
@@ -53,7 +64,7 @@ function ownsAsset(state: GameState, player: PlayerId, ref: PoolAssetRef): boole
 function decideCreatePool(
   state: GameState, cmd: CreatePoolCommand,
 ): readonly GameEvent[] | Rejection {
-  if (locked(state)) {
+  if (locked(state, 'cdo')) {
     return reject('INSTRUMENT_LOCKED_THIS_ERA', `CDO pools unlock in Era ${ECONOMY.UNLOCK_ERA.cdo}.`)
   }
   if (state.phase !== 'open') {
@@ -136,11 +147,60 @@ function decideSellTranche(
   }]
 }
 
+/**
+ * Spec section 8: naked CDS is legal by design — the buyer is deliberately never
+ * checked for ownership of, or exposure to, the reference obligation.
+ */
+function decideWriteSwap(
+  state: GameState, cmd: WriteSwapCommand,
+): readonly GameEvent[] | Rejection {
+  if (locked(state, 'cds')) {
+    return reject('INSTRUMENT_LOCKED_THIS_ERA', `Credit default swaps unlock in Era ${ECONOMY.UNLOCK_ERA.cds}.`)
+  }
+  if (state.phase !== 'open') {
+    return reject('WRONG_PHASE', 'Swaps can only be written during an Open phase.')
+  }
+  if (cmd.buyer === cmd.seller) {
+    return reject('SELF_DEALING', 'You cannot buy protection from yourself.')
+  }
+  if (state.swaps.some((s) => s.id === cmd.swapId)) {
+    return reject('DUPLICATE_CONTRACT_ID', 'A swap with this id already exists.')
+  }
+  const face = referenceFace(state, cmd.reference)
+  if (face === null) {
+    return reject('CONTRACT_NOT_FOUND', 'That reference obligation does not exist or has settled.')
+  }
+  if (!isWholeDollars(cmd.notional) || cmd.notional <= 0) {
+    return reject('NEGATIVE_AMOUNT', 'Notional must be a positive, whole number of dollars.')
+  }
+  if (cmd.notional > face) {
+    return reject(
+      'SWAP_NOTIONAL_EXCEEDS_FACE',
+      `Notional is capped at the reference obligation's face value of $${face}.`,
+    )
+  }
+  if (!isWholeDollars(cmd.premiumPerRound) || cmd.premiumPerRound < 0) {
+    return reject('NEGATIVE_AMOUNT', 'Premium must be a non-negative, whole number of dollars.')
+  }
+  const collateral = requiredCollateral(cmd.notional)
+  if (creditHeadroom(state, cmd.seller) < collateral) {
+    return reject(
+      'INSUFFICIENT_BORROWING_BASE',
+      `Writing this swap requires $${collateral} of unused borrowing base.`,
+    )
+  }
+  return [{
+    type: 'SwapWritten', id: cmd.swapId, buyer: cmd.buyer, seller: cmd.seller,
+    reference: cmd.reference, notional: cmd.notional, premiumPerRound: cmd.premiumPerRound,
+  }]
+}
+
 export function decideSecuritization(
   state: GameState, command: SecuritizationCommand,
 ): readonly GameEvent[] | Rejection {
   switch (command.type) {
     case 'CreatePool': return decideCreatePool(state, command)
     case 'SellTranche': return decideSellTranche(state, command)
+    case 'WriteSwap': return decideWriteSwap(state, command)
   }
 }

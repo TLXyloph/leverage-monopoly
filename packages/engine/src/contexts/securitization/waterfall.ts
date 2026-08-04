@@ -4,6 +4,7 @@ import type { GameEvent } from '../../core/events.js'
 import { collateralLiquidationProceeds, findPeerLoan } from '../credit/index.js'
 import { assetKey, poolIsExhausted, trancheOf } from './selectors.js'
 import { reduceSecuritization } from './reduce.js'
+import { loanCreditEvents, trancheCreditEvents } from './swaps.js'
 
 export interface Distribution {
   readonly tranche: Tranche['kind']
@@ -132,6 +133,21 @@ export function terminationEvents(pool: Pool): readonly GameEvent[] {
 }
 
 /**
+ * `terminationEvents` plus the tranche CDS credit events its shortfalls trigger (spec
+ * section 8): any tranche short of its face at termination triggers its referencing
+ * swap; a tranche paid in full lets its swaps expire worthless. Used by both the
+ * ordinary Settlement step 6 termination path and the forced round-24 termination —
+ * spec 19.1 makes the two identical in every respect except when they run.
+ */
+function terminationEventsWithSwaps(state: GameState, pool: Pool): readonly GameEvent[] {
+  const shortfalls = shortfallsOf(pool)
+  return [
+    { type: 'PoolTerminated', poolId: pool.id, shortfalls },
+    ...trancheCreditEvents(state, pool.id, shortfalls),
+  ]
+}
+
+/**
  * Waterfall for every live pool with cash to distribute this round, plus the
  * originator's distressed-debt shortfall (spec 19.8's obligation waterfall: a player is
  * never left unable to pay) when their clean cash falls short of the full amount
@@ -163,18 +179,18 @@ export function waterfallEvents(
 
 /**
  * Settlement step 6, spec 19.1, in order: convert defaulted pooled collateral to cash,
- * distribute every waterfall, then terminate any pool whose assets have all run their
- * course. `roundEvents` is every event emitted since this round's Market phase began,
- * so rent routed during Movement and loan interest/default from Settlement step 5 are
- * both visible here.
+ * distribute every waterfall, settle loan-note CDS credit events, then terminate any
+ * pool whose assets have all run their course. `roundEvents` is every event emitted
+ * since this round's Market phase began, so rent routed during Movement and loan
+ * interest/default from Settlement step 5 are both visible here.
  *
  * Collateral events are reduced onto a local copy of `state` BEFORE `waterfallEvents`
  * runs, so the originator's clean cash already reflects this round's collateral
  * proceeds when the distressed-debt fallback checks it — checking against the
- * pre-collateral `state` would read a stale balance and misfire.
- *
- * Terminations are then judged against a further-reduced copy so a tranche paid off by
- * this very round's distribution is not recorded as short.
+ * pre-collateral `state` would read a stale balance and misfire. Loan-note CDS credit
+ * events are read off the further-reduced state so a swap is priced against
+ * post-waterfall cash, and are themselves reduced before termination runs — a swap
+ * this round already marked `triggered` can never be settled a second time.
  */
 export function settleSecuritization(
   state: GameState,
@@ -184,15 +200,20 @@ export function settleSecuritization(
   const afterCollateral = collateral.reduce(reduceSecuritization, state)
   const seen = [...roundEvents, ...collateral]
   const waterfalls = waterfallEvents(afterCollateral, seen)
-  const after = waterfalls.reduce(reduceSecuritization, afterCollateral)
+  const afterWaterfalls = waterfalls.reduce(reduceSecuritization, afterCollateral)
+  const loanSwaps = loanCreditEvents(afterWaterfalls, seen)
+  const after = loanSwaps.reduce(reduceSecuritization, afterWaterfalls)
   const terminations = after.pools
     .filter((pool) => poolIsExhausted(after, pool))
-    .flatMap((pool) => terminationEvents(pool))
-  return [...collateral, ...waterfalls, ...terminations]
+    .flatMap((pool) => terminationEventsWithSwaps(after, pool))
+  return [...collateral, ...waterfalls, ...loanSwaps, ...terminations]
 }
 
 /** The extra round-24 step in spec 19.1: every live pool terminates, whatever its
- * assets' state. */
+ * assets' state, and every tranche short of face at that moment triggers its
+ * referencing CDS — spec section 8's forced round-24 settlement. */
 export function terminateAllPools(state: GameState): readonly GameEvent[] {
-  return state.pools.filter((p) => !p.terminated).flatMap((pool) => terminationEvents(pool))
+  return state.pools
+    .filter((p) => !p.terminated)
+    .flatMap((pool) => terminationEventsWithSwaps(state, pool))
 }

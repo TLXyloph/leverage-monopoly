@@ -1,5 +1,5 @@
-import type { DeedId, Money, PlayerId } from '../../core/types.js'
-import type { DeedState, GameState, Pool } from '../../core/state.js'
+import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
+import type { DeedState, GameState, Pool, Swap } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { findPool } from './selectors.js'
 
@@ -22,6 +22,22 @@ function subCash(state: GameState, player: PlayerId, amount: Money): GameState {
 
 function withPool(state: GameState, id: string, patch: (p: Pool) => Pool): GameState {
   return { ...state, pools: state.pools.map((p) => (p.id === id ? patch(p) : p)) }
+}
+
+function withSwap(state: GameState, id: ContractId, patch: Partial<Swap>): GameState {
+  return { ...state, swaps: state.swaps.map((s) => (s.id === id ? { ...s, ...patch } : s)) }
+}
+
+/**
+ * A pure player-to-player transfer for a CDS leg: the payer's clean cash floors at
+ * zero via `subCash`, but the recipient is always credited the FULL amount — any gap
+ * is closed by a separately-emitted `ObligationCapitalised` event, reduced by `credit`
+ * (Task 17's `swaps.ts` emits that pairing). Mirrors `board/reduce.ts`'s identically
+ * shaped `transfer`, which `securitization` cannot import directly: the dependency
+ * arrow runs securitization -> credit/markets, never -> board.
+ */
+function transfer(state: GameState, from: PlayerId, to: PlayerId, amount: Money): GameState {
+  return addCash(subCash(state, from, amount), to, amount)
 }
 
 export function reduceSecuritization(state: GameState, event: GameEvent): GameState {
@@ -93,6 +109,31 @@ export function reduceSecuritization(state: GameState, event: GameEvent): GameSt
 
     case 'PoolTerminated':
       return withPool(state, event.poolId, (p) => ({ ...p, terminated: true }))
+
+    case 'SwapWritten': {
+      const swap: Swap = {
+        id: event.id, buyer: event.buyer, seller: event.seller, reference: event.reference,
+        notional: event.notional, premiumPerRound: event.premiumPerRound, status: 'active',
+      }
+      return { ...state, swaps: [...state.swaps, swap] }
+    }
+
+    /** Settlement step 7, spec 19.1. Buyer to seller, in full. */
+    case 'SwapPremiumPaid': {
+      const s = state.swaps.find((x) => x.id === event.id)
+      return s === undefined ? state : transfer(state, s.buyer, s.seller, event.amount)
+    }
+
+    /** A credit event. Seller to buyer, in full, and the swap is spent. */
+    case 'SwapTriggered': {
+      const s = state.swaps.find((x) => x.id === event.id)
+      if (s === undefined) return state
+      return withSwap(transfer(state, s.seller, s.buyer, event.payout), s.id, { status: 'triggered' })
+    }
+
+    /** The referenced tranche was paid in full by termination; no money moves. */
+    case 'SwapExpired':
+      return withSwap(state, event.id, { status: 'expired' })
 
     default:
       return state

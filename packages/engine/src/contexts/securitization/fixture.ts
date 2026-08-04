@@ -2,7 +2,8 @@ import type { Rejection } from '../../core/errors.js'
 import { isRejection } from '../../core/errors.js'
 import type { GameEvent } from '../../core/events.js'
 import type {
-  DeedOption, DeedState, GameConfig, GameState, PeerLoan, PlayerState, Pool, RentFuture, Tranche,
+  DeedOption, DeedState, GameConfig, GameState, PeerLoan, PlayerState, Pool, RentFuture, Swap,
+  Tranche,
 } from '../../core/state.js'
 import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
 import { PLAYER_IDS } from '../../core/types.js'
@@ -60,6 +61,10 @@ export function withOptions(state: GameState, options: readonly DeedOption[]): G
 
 export function withPools(state: GameState, pools: readonly Pool[]): GameState {
   return { ...state, pools: [...state.pools, ...pools] }
+}
+
+export function withSwaps(state: GameState, swaps: readonly Swap[]): GameState {
+  return { ...state, swaps: [...state.swaps, ...swaps] }
 }
 
 export function eventsOf(result: readonly GameEvent[] | Rejection): readonly GameEvent[] {
@@ -167,6 +172,20 @@ export function pool(id: ContractId, patch: Partial<Pool> = {}): Pool {
     ],
     tranches: tranches(600, 500, 810),
     terminated: false,
+    ...patch,
+  }
+}
+
+/** A synthetic CDS (Task 17), deliberately not derived via `decideSecuritization`. */
+export function swap(id: ContractId, patch: Partial<Swap> = {}): Swap {
+  return {
+    id,
+    buyer: 'P3',
+    seller: 'P4',
+    reference: { kind: 'peer-loan', id: 'l-1' },
+    notional: 400,
+    premiumPerRound: 40,
+    status: 'active',
     ...patch,
   }
 }

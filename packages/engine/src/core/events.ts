@@ -12,6 +12,12 @@ import type { GameConfig, PoolAssetRef, SwapReference, Tranche } from './state.j
 export type ObligationKind =
   | 'rent' | 'tax' | 'jail-fee' | 'interest' | 'carrying-cost'
   | 'audit-fine' | 'cds-premium' | 'peer-loan-interest'
+  /** A CDS payout the seller's clean cash could not fully cover (Task 17). Spec 19.8
+   * lists CDS premiums among the obligation waterfall's obligations; the notional
+   * payout on a triggered swap is a player-to-player obligation of the identical
+   * shape (pay in full, capitalise any shortfall), so it gets its own kind rather
+   * than overloading 'cds-premium' with a different event. */
+  | 'cds-payout'
 
 /** Typed so the reducer never parses a display string. */
 export type BriberyEffect =
