@@ -1,13 +1,18 @@
 import type { GameEvent } from '../../core/events.js'
-import type { DeedState, GameState, PlayerState } from '../../core/state.js'
-import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import type { DeedState, GameState, PeerLoan, PlayerState } from '../../core/state.js'
+import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
 import { applyAgainstDebt } from './selectors.js'
 
-function withPlayer(state: GameState, id: PlayerId, patch: Partial<PlayerState>): GameState {
+/** Exported for `reduce-loans.ts` (Task 11), which needs the same player-patch mutation
+ * peer-loan events use — origination, a default's impairment flag — without duplicating it. */
+export function withPlayer(state: GameState, id: PlayerId, patch: Partial<PlayerState>): GameState {
   return { ...state, players: { ...state.players, [id]: { ...state.players[id], ...patch } } }
 }
 
-function withDeed(state: GameState, id: DeedId, patch: Partial<DeedState>): GameState {
+/** Exported for `reduce-loans.ts`: a defaulted loan's collateral transfer uses this same
+ * deed-patch mutation. A no-op if the deed id does not resolve, which lets the default
+ * reducer skip collateral the borrower no longer owns without a separate guard. */
+export function withDeed(state: GameState, id: DeedId, patch: Partial<DeedState>): GameState {
   const deed = state.deeds[id]
   if (deed === undefined) return state
   return { ...state, deeds: { ...state.deeds, [id]: { ...deed, ...patch } } }
@@ -15,9 +20,17 @@ function withDeed(state: GameState, id: DeedId, patch: Partial<DeedState>): Game
 
 /** A pure player-to-player cash movement — no Treasury counterparty. Used for the
  * encumbrance make-whole/refund payments, which come out of the liquidated player's
- * own (rising) drawn balance rather than out of the bank. */
-function addCash(state: GameState, id: PlayerId, delta: Money): GameState {
+ * own (rising) drawn balance rather than out of the bank. Exported for `reduce-loans.ts`,
+ * where every peer-loan cash movement (origination, interest, repayment, note sale) is
+ * the same kind of pure transfer between two players. */
+export function addCash(state: GameState, id: PlayerId, delta: Money): GameState {
   return withPlayer(state, id, { cleanCash: state.players[id].cleanCash + delta })
+}
+
+/** Patches a loan record by id. A no-op if the id does not resolve. Exported for
+ * `reduce-loans.ts`, which is the only caller — every peer-loan event patches `state.loans`. */
+export function withLoan(state: GameState, id: ContractId, patch: Partial<PeerLoan>): GameState {
+  return { ...state, loans: state.loans.map((l) => (l.id === id ? { ...l, ...patch } : l)) }
 }
 
 /** The part of an obligation the payer's clean cash cannot cover. Mirrors `board`'s

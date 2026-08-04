@@ -87,11 +87,100 @@ export function creditInterestDue(state: GameState, player: PlayerId): Money {
   return floorPercent(drawnCredit(state, player), prevailingRate(state))
 }
 
-/** Lookup by contract id, whatever its status. No peer loans originate until Task 11,
- * so `state.loans` is empty for the whole of Task 9; this is here now because
- * `securitization` (Task 16) needs the exact signature from `contexts/credit/index.ts`. */
+/** Lookup by contract id, whatever its status. Deliberately does not filter on status:
+ * `securitization` (Task 16) reads a note at Settlement step 6, one step after `credit`
+ * may have defaulted it at step 5, and needs to see it regardless. */
 export function findPeerLoan(state: GameState, id: ContractId): PeerLoan | undefined {
   return state.loans.find((l) => l.id === id)
+}
+
+/** Every loan still `active`. Settlement services these; a repaid or defaulted loan is
+ * inert and drops out on its own. */
+export function activeLoans(state: GameState): readonly PeerLoan[] {
+  return state.loans.filter((l) => l.status === 'active')
+}
+
+/**
+ * Deed ids pledged as collateral on any currently active loan (spec section 7). Locks
+ * them against a second pledge, and against voluntary mortgage/trade/sale at whichever
+ * command decides those actions. A forced liquidation under Task 10 outranks a peer
+ * pledge and may still take one — lending against a levered borrower is risky by design.
+ */
+export function pledgedDeeds(state: GameState): readonly DeedId[] {
+  return activeLoans(state).flatMap((l) => l.collateral)
+}
+
+/**
+ * The id of the live (non-terminated) pool holding this loan as an asset, or null if the
+ * note is unpooled or its pool has already wound down. `credit` uses this to tell a
+ * pooled note apart from an ordinary one: it may move cash into or out of a pooled asset
+ * but must never transfer or liquidate the asset itself, because `securitization` has
+ * already sold that cashflow to the tranche holders (spec 19.4).
+ */
+export function poolHoldingLoan(state: GameState, loanId: ContractId): ContractId | null {
+  const pool = state.pools.find(
+    (p) => !p.terminated && p.assets.some((a) => a.kind === 'peer-loan' && a.id === loanId),
+  )
+  return pool === undefined ? null : pool.id
+}
+
+/**
+ * Settlement step 5. floorPercent(outstanding, ratePerRound), per loan — never on a sum
+ * across loans, which is the rule Task 16 also relies on for the same spec 19.4
+ * conversion. Pure over the loan record: both the balance and the rate live on it.
+ */
+export function peerLoanInterestDue(loan: PeerLoan): Money {
+  return floorPercent(loan.outstanding, loan.ratePerRound)
+}
+
+/**
+ * Spec 19.4. What a defaulted note's collateral converts to when it is inside a live pool
+ * and `securitization` sells it to the bank instead of handing it to the note holder:
+ * floorPercent(faceValue, LIQUIDATION_FLOOR) PER DEED, then summed. Flooring the sum
+ * instead would disagree with `securitization`'s own conversion of the same rule. A deed
+ * no longer on the board contributes zero rather than throwing.
+ */
+export function collateralLiquidationProceeds(state: GameState, loan: PeerLoan): Money {
+  return loan.collateral.reduce((sum, deedId) => {
+    const d = state.deeds[deedId]
+    return d === undefined ? sum : sum + floorPercent(d.faceValue, ECONOMY.LIQUIDATION_FLOOR)
+  }, 0)
+}
+
+export interface PeerLoanFunding {
+  /** Paid out of the borrower's clean cash. */
+  readonly fromCash: Money
+  /** The remainder, which capitalises into the drawn credit balance. */
+  readonly capitalised: Money
+  /** True when the coupon is a MISSED payment under spec section 7 rather than a paid one. */
+  readonly defaults: boolean
+}
+
+/**
+ * Spec section 7 says default occurs on "a missed interest payment". Spec 19.8 says every
+ * obligation, peer loan interest explicitly included, resolves through clean cash and then
+ * uncapped capitalisation into the drawn balance, and that "a player is never left unable
+ * to pay". Read naively together, no coupon is ever missed and section 7's first default
+ * trigger is dead letter.
+ *
+ * The resolution: a coupon is MISSED when the borrower cannot cover it from clean cash AND
+ * capitalising the remainder would push the drawn balance past their borrowing base.
+ * Inside the base, 19.8 governs and the lender is paid in full from the credit line.
+ * Beyond it, the borrower has no lawful way to fund the payment and section 7 governs.
+ *
+ * Two consequences worth being explicit about. First, the borrowing base is a DEFAULT
+ * TRIGGER here, not a cap on the capitalisation: the waterfall still has exactly two steps
+ * and there is no partial payment — either the whole coupon is funded or the loan
+ * defaults and no cash moves at all. Second, a borrower already over their base has zero
+ * headroom, so their next coupon defaults; a margin call and a peer default are meant to
+ * arrive together for a player who has run out of room.
+ */
+export function fundPeerLoanInterest(state: GameState, loan: PeerLoan): PeerLoanFunding {
+  const due = peerLoanInterestDue(loan)
+  const fromCash = Math.min(state.players[loan.borrower].cleanCash, due)
+  const capitalised = due - fromCash
+  const headroom = Math.max(0, creditHeadroom(state, loan.borrower))
+  return { fromCash, capitalised, defaults: capitalised > headroom }
 }
 
 /**

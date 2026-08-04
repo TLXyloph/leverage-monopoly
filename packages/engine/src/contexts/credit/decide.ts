@@ -4,6 +4,7 @@ import type { Rejection } from '../../core/errors.js'
 import type { GameEvent } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
 import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import { decidePeerLoan, type PeerLoanCommand } from './decide-loans.js'
 import { reduceCredit } from './reduce.js'
 import {
   creditHeadroom, groupBuildingStrip, isUnderMarginCall,
@@ -39,6 +40,7 @@ export type CreditCommand =
       readonly deed: DeedId
       readonly bids: readonly { readonly player: PlayerId; readonly amount: Money }[] }
   | { readonly type: 'RepayDistressedDebt'; readonly player: PlayerId; readonly amount: Money }
+  | PeerLoanCommand
 
 /**
  * Spec 19.12. Liquidation extinguishes every encumbrance on the lot: the rent future
@@ -209,5 +211,10 @@ export function decideCredit(
       }
       return [{ type: 'DistressedDebtRepaid', player: command.player, amount: command.amount }]
     }
+
+    case 'OriginatePeerLoan':
+    case 'RepayPeerLoan':
+    case 'SellPeerLoanNote':
+      return decidePeerLoan(state, command)
   }
 }

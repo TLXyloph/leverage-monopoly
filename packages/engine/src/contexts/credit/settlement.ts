@@ -1,10 +1,12 @@
 import { ECONOMY } from '../../config/economy.js'
 import type { GameEvent, ObligationKind } from '../../core/events.js'
-import type { GameState } from '../../core/state.js'
+import type { GameState, PeerLoan } from '../../core/state.js'
 import type { Money, PlayerId } from '../../core/types.js'
+import { reduceCredit } from './reduce.js'
+import { reducePeerLoans } from './reduce-loans.js'
 import {
-  carryingCostFor, creditInterestDue, distressedInterestDue, liquidationQueue,
-  marginShortfall, prevailingRate, unmortgagedDeedCount,
+  carryingCostFor, creditInterestDue, distressedInterestDue, fundPeerLoanInterest,
+  liquidationQueue, marginShortfall, prevailingRate, unmortgagedDeedCount,
 } from './selectors.js'
 
 /** Era II opens at the round after Era I ends. Spec section 2. */
@@ -144,4 +146,77 @@ export function exhaustLiquidation(state: GameState, player: PlayerId): readonly
     { type: 'CreditWrittenDown', player, amount: shortfall },
     { type: 'MarginCallCured', player },
   ]
+}
+
+/** Folds a batch through both credit reducers, so the next loan sees the last one's effect. */
+function applyLocally(state: GameState, events: readonly GameEvent[]): GameState {
+  return events.reduce<GameState>(
+    (acc, event) => reducePeerLoans(reduceCredit(acc, event), event),
+    state,
+  )
+}
+
+/**
+ * Spec section 7 default. Collateral to the note holder, the remaining balance written
+ * off, and the borrower permanently credit-impaired — spec 19.10 makes the halving a
+ * single event however many times they default, which the reducer's boolean guarantees.
+ */
+function defaultEvents(loan: PeerLoan): readonly GameEvent[] {
+  return [{
+    type: 'PeerLoanDefaulted',
+    id: loan.id,
+    collateralTo: loan.lender,
+    writtenOff: loan.outstanding,
+  }]
+}
+
+function settleOneLoan(state: GameState, loan: PeerLoan): readonly GameEvent[] {
+  const funding = fundPeerLoanInterest(state, loan)
+  if (funding.defaults) return defaultEvents(loan)
+
+  const events: GameEvent[] = []
+  const due = funding.fromCash + funding.capitalised
+  if (due > 0) {
+    events.push({ type: 'PeerLoanInterestPaid', id: loan.id, amount: due })
+    if (funding.capitalised > 0) {
+      events.push({
+        type: 'ObligationCapitalised',
+        player: loan.borrower,
+        amount: funding.capitalised,
+        obligation: 'peer-loan-interest',
+      })
+    }
+  }
+
+  // Spec section 7's second default trigger: an outstanding balance at term expiry. The
+  // borrower's escape is to repay during that round's Open phase, which closes the loan
+  // before Settlement ever reaches it.
+  if (state.round >= loan.maturesAtRound && loan.outstanding > 0) {
+    events.push(...defaultEvents(loan))
+  }
+  return events
+}
+
+/**
+ * Settlement step 5, immediately after credit-line interest at step 4. The ordering is
+ * observable and deliberate: interest capitalised at step 4 has already consumed the
+ * headroom that step 5 measures against, so a Settlement can charge bank interest and
+ * default a peer loan in the same pass.
+ *
+ * Loans are serviced in origination order — `state.loans` is append-only, so that order
+ * is identical under replay — and each is folded into a working state before the next is
+ * priced, because the first coupon spends the cash the second was counting on.
+ */
+export function settlePeerLoans(state: GameState): readonly GameEvent[] {
+  const events: GameEvent[] = []
+  let working = state
+  for (const loan of state.loans) {
+    if (loan.status !== 'active') continue
+    const current = working.loans.find((l) => l.id === loan.id)
+    if (current === undefined || current.status !== 'active') continue
+    const batch = settleOneLoan(working, current)
+    events.push(...batch)
+    working = applyLocally(working, batch)
+  }
+  return events
 }

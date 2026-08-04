@@ -1,11 +1,14 @@
 import type { Rejection } from '../../core/errors.js'
 import { isRejection } from '../../core/errors.js'
 import type { GameEvent } from '../../core/events.js'
-import type { DeedState, GameConfig, GameState, PlayerState } from '../../core/state.js'
-import type { DeedId, Money, PlayerId } from '../../core/types.js'
+import type {
+  DeedState, GameConfig, GameState, PeerLoan, PlayerState, Pool,
+} from '../../core/state.js'
+import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
 import { PLAYER_IDS } from '../../core/types.js'
 import { initialState } from '../session/index.js'
 import { reduceCredit } from './reduce.js'
+import { reducePeerLoans } from './reduce-loans.js'
 
 /**
  * Test-support builders, deliberately not re-exported from `index.ts`. Shared across
@@ -76,6 +79,50 @@ export function rejectionOf(result: readonly GameEvent[] | Rejection): Rejection
   return result
 }
 
+/**
+ * A synthetic peer loan (Task 11), deliberately not one derived via `peerLoanId`. Used
+ * where a test needs an exact contract id or a mid-life balance without going through
+ * origination first.
+ */
+export function loan(id: ContractId, patch: Partial<PeerLoan> = {}): PeerLoan {
+  return {
+    id,
+    lender: 'P2',
+    borrower: 'P1',
+    principal: 600,
+    outstanding: 600,
+    ratePerRound: 0.1,
+    maturesAtRound: 12,
+    collateral: [],
+    status: 'active',
+    ...patch,
+  }
+}
+
+/** A synthetic pool (Task 16-17), used here only to exercise `credit`'s live-pool guard
+ * on a note it holds — the tranches themselves are never inspected by `credit`. */
+export function pool(id: ContractId, patch: Partial<Pool> = {}): Pool {
+  return {
+    id,
+    originator: 'P2',
+    assets: [],
+    tranches: [
+      { kind: 'senior', face: 300, paid: 0, holder: 'P3' },
+      { kind: 'mezzanine', face: 200, paid: 0, holder: 'P4' },
+      { kind: 'equity', face: 0, paid: 0, holder: 'P2' },
+    ],
+    terminated: false,
+    ...patch,
+  }
+}
+
+export function withLoans(state: GameState, loans: readonly PeerLoan[]): GameState {
+  return { ...state, loans: [...state.loans, ...loans] }
+}
+
 export function applyAll(state: GameState, events: readonly GameEvent[]): GameState {
-  return events.reduce<GameState>((acc, event) => reduceCredit(acc, event), state)
+  return events.reduce<GameState>(
+    (acc, event) => reducePeerLoans(reduceCredit(acc, event), event),
+    state,
+  )
 }
