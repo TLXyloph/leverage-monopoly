@@ -1,8 +1,9 @@
 import { ECONOMY } from '../../config/economy.js'
+import { briberyTerms, entitlementOfKind } from '../../core/card-effects.js'
 import { reject } from '../../core/errors.js'
 import type { Rejection } from '../../core/errors.js'
 import type { BriberyEffect, GameEvent } from '../../core/events.js'
-import { isWholeDollars } from '../../core/money.js'
+import { floorPercent, isWholeDollars } from '../../core/money.js'
 import type { ActiveVenture, GameState } from '../../core/state.js'
 import type { DiceRoll, Money, PlayerId } from '../../core/types.js'
 import { isUnlocked } from '../session/index.js'
@@ -62,14 +63,26 @@ function decideLaunchVenture(
       `Your ${cmd.venture} is already running. Wait for it to finish.`)
   }
   const spec = ECONOMY.VENTURES[cmd.venture]
-  const funds = checkFunds(state, cmd.player, spec.cost, cmd.fundedFrom, `The ${cmd.venture}`)
+  // E2-?? ("half-price venture"): a one-use voucher scales the launch cost. The Heat
+  // charge is untouched — the card discounts the money, not the exposure.
+  const voucher = entitlementOfKind(state, cmd.player, 'half-price-venture')
+  const cost = voucher === null
+    ? spec.cost
+    : floorPercent(spec.cost, voucher.params['factor'] ?? 1)
+  const funds = checkFunds(state, cmd.player, cost, cmd.fundedFrom, `The ${cmd.venture}`)
   if (funds !== null) return funds
 
   return [
     { type: 'VentureLaunched', player: cmd.player, venture: cmd.venture,
-      cost: spec.cost, rounds: spec.rounds, fundedFrom: cmd.fundedFrom },
+      cost, rounds: spec.rounds, fundedFrom: cmd.fundedFrom },
     { type: 'HeatChanged', player: cmd.player, delta: spec.heat,
       reason: `launched ${cmd.venture}` },
+    ...(voucher === null
+      ? []
+      : [{
+        type: 'EntitlementConsumed' as const,
+        player: cmd.player, entitlement: voucher.id, used: 1,
+      }]),
   ]
 }
 
@@ -145,16 +158,40 @@ function decideLaunder(
     return reject('INSUFFICIENT_DIRTY_CASH', `You hold $${p.dirtyCash} in dirty cash.`)
   }
 
-  // Spec 19.9: the haircut reads Heat BEFORE this transaction's +1.
-  const haircutBps = launderHaircutBps(p.heat)
-  const cleanOut = launderProceeds(cmd.amount, p.heat)
+  /**
+   * E2-19 ("An Accommodating Cashier"): a one-use `cheap-launder` voucher replaces
+   * BOTH terms of the transaction — a flat `haircut` regardless of Heat, and a
+   * `heatDelta` of 0 instead of the standard +1. It still counts against the
+   * once-per-Open-phase limit, which is why it is applied after that guard rather
+   * than bypassing it.
+   *
+   * Otherwise, spec 19.9: the haircut reads Heat BEFORE this transaction's +1.
+   */
+  const voucher = entitlementOfKind(state, cmd.player, 'cheap-launder')
+  const haircut = voucher === null
+    ? launderHaircutBps(p.heat) / 10_000
+    : (voucher.params['haircut'] ?? 0)
+  const cleanOut = voucher === null
+    ? launderProceeds(cmd.amount, p.heat)
+    : cmd.amount - floorPercent(cmd.amount, haircut)
+  const heatDelta = voucher === null
+    ? ECONOMY.LAUNDER_HEAT
+    : (voucher.params['heatDelta'] ?? 0)
 
-  return [
-    { type: 'CashLaundered', player: cmd.player, dirtyIn: cmd.amount, cleanOut,
-      haircut: haircutBps / 10_000 },
-    { type: 'HeatChanged', player: cmd.player, delta: ECONOMY.LAUNDER_HEAT,
-      reason: 'laundering' },
+  const events: GameEvent[] = [
+    { type: 'CashLaundered', player: cmd.player, dirtyIn: cmd.amount, cleanOut, haircut },
   ]
+  if (heatDelta !== 0) {
+    events.push({
+      type: 'HeatChanged', player: cmd.player, delta: heatDelta, reason: 'laundering',
+    })
+  }
+  if (voucher !== null) {
+    events.push({
+      type: 'EntitlementConsumed', player: cmd.player, entitlement: voucher.id, used: 1,
+    })
+  }
+  return events
 }
 
 /**
@@ -179,17 +216,21 @@ function decideBribe(
   if (p.briberyUsedThisRound) {
     return reject('BRIBERY_ALREADY_USED', 'You have already paid a bribe this round.')
   }
-  if (p.dirtyCash < ECONOMY.BRIBERY_COST) {
+  // era-decks 6.2: a `bribery-terms` modifier repriced the going rate for everyone
+  // (it is a world modifier, not a per-player one). Defaults to ECONOMY's own
+  // BRIBERY_COST/BRIBERY_HEAT, so an uncarded game is unchanged.
+  const terms = briberyTerms(state)
+  if (p.dirtyCash < terms.cost) {
     return reject('INSUFFICIENT_DIRTY_CASH',
-      `Bribery costs $${ECONOMY.BRIBERY_COST} in dirty cash and you hold $${p.dirtyCash}.`)
+      `Bribery costs $${terms.cost} in dirty cash and you hold $${p.dirtyCash}.`)
   }
   if (cmd.effect.kind === 'delay-margin-call' && p.marginCallFlaggedAt === null) {
     return reject('INVALID_BRIBERY_TARGET', 'You have no margin call to delay.')
   }
 
   return [
-    { type: 'BriberyUsed', player: cmd.player, cost: ECONOMY.BRIBERY_COST, effect: cmd.effect },
-    { type: 'HeatChanged', player: cmd.player, delta: ECONOMY.BRIBERY_HEAT, reason: 'bribery' },
+    { type: 'BriberyUsed', player: cmd.player, cost: terms.cost, effect: cmd.effect },
+    { type: 'HeatChanged', player: cmd.player, delta: terms.heat, reason: 'bribery' },
   ]
 }
 

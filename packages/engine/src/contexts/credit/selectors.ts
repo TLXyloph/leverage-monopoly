@@ -1,4 +1,8 @@
 import { ECONOMY } from '../../config/economy.js'
+import {
+  borrowingBaseOverride, creditInterestWaived, entitlementOfKind, interestRateFor,
+  marginThreshold,
+} from '../../core/card-effects.js'
 import { floorPercent } from '../../core/money.js'
 import type { DeedState, GameState, PeerLoan, PlayerState } from '../../core/state.js'
 import type { ColorGroup, ContractId, DeedId, Money, PlayerId, RoundNumber } from '../../core/types.js'
@@ -21,9 +25,13 @@ export function unmortgagedDeedCount(state: GameState, player: PlayerId): number
  * Reads as 0 until Task 17 gives any player a written swap.
  */
 export function swapCollateralPosted(state: GameState, player: PlayerId): Money {
+  // era-decks 6.2: a `cds-posting-addend` card raises the posting requirement for the
+  // players it names. `borrowingBaseOverride` seeds the field with
+  // ECONOMY.CDS_COLLATERAL_RATE, so an uncarded player posts exactly 30% as before.
+  const rate = borrowingBaseOverride(state, player).cdsPostingRate
   return state.swaps
     .filter((s) => s.seller === player && s.status === 'active')
-    .reduce((sum, s) => sum + floorPercent(s.notional, ECONOMY.CDS_COLLATERAL_RATE), 0)
+    .reduce((sum, s) => sum + floorPercent(s.notional, rate), 0)
 }
 
 /** The player's currently drawn credit-line balance. Exported directly for
@@ -44,16 +52,26 @@ export function drawnCredit(state: GameState, player: PlayerId): Money {
  *
  * Floored at zero: a base is a quantity of available credit and cannot be negative.
  * `creditHeadroom`, below, is what stays signed.
+ *
+ * era-decks 6.2 lets a card redefine each term, and `borrowingBaseOverride` supplies
+ * them in the canonical order this function applies: the advance RATES first (so the
+ * formula itself changes before anything is summed), then the additive term, then the
+ * multiplier, then CDS postings come off the result. Every field of the override is
+ * seeded from the `ECONOMY` constant it replaces, so a player with no live modifier
+ * computes exactly the pre-card number: `deedRate`/`buildingRate` are the ECONOMY
+ * rates, `addend` is 0 and `multiplier` is 1.
  */
 export function borrowingBase(state: GameState, player: PlayerId): Money {
+  const override = borrowingBaseOverride(state, player)
   const eligible = deedsOwnedBy(state, player).filter((d) => !d.mortgaged)
   const face = eligible.reduce((sum, d) => sum + d.faceValue, 0)
   const buildings = eligible.reduce((sum, d) => sum + d.houses * d.houseCost, 0)
   const gross =
-    floorPercent(face, ECONOMY.DEED_ADVANCE_RATE) +
-    floorPercent(buildings, ECONOMY.BUILDING_ADVANCE_RATE)
+    floorPercent(face, override.deedRate) +
+    floorPercent(buildings, override.buildingRate)
   const halved = state.players[player].creditImpaired ? Math.floor(gross / 2) : gross
-  return Math.max(0, halved - swapCollateralPosted(state, player))
+  const adjusted = floorPercent(halved + override.addend, override.multiplier)
+  return Math.max(0, adjusted - swapCollateralPosted(state, player))
 }
 
 /**
@@ -82,9 +100,33 @@ export function prevailingRate(state: GameState): number {
   return ECONOMY.INTEREST_RATE_BY_ERA[state.era]
 }
 
-/** Settlement step 4. Floored. */
+/**
+ * The rate this player's drawn balance actually accrues at this round. era-decks 6.2:
+ * an `interest-rate-override` card replaces the era rate outright for the players it
+ * names; everyone else gets `prevailingRate` unchanged. Emitted on `InterestAccrued`
+ * so the log records the rate that was really charged, not the era's headline rate.
+ */
+export function creditInterestRate(state: GameState, player: PlayerId): number {
+  if (creditInterestWaived(state, player) !== null) return 0
+  return interestRateFor(state, player, prevailingRate(state))
+}
+
+/**
+ * Settlement step 4. Floored.
+ *
+ * era-decks 6.2's `waive-credit-interest` cancels the charge outright — but only for a
+ * player actually carrying a balance. A debt-free player pays the card's
+ * `ifZeroBalanceCollect` instead, which is the whole point of those cards: they are a
+ * subsidy for the levered, not a free pass for everyone. That flat amount rides the same
+ * `InterestAccrued` event (at rate 0) so it flows through the identical Treasury leg and
+ * obligation waterfall, rather than needing a second event that conservation would have
+ * to learn about.
+ */
 export function creditInterestDue(state: GameState, player: PlayerId): Money {
-  return floorPercent(drawnCredit(state, player), prevailingRate(state))
+  const waivedAlternative = creditInterestWaived(state, player)
+  const drawn = drawnCredit(state, player)
+  if (waivedAlternative !== null) return drawn > 0 ? 0 : waivedAlternative
+  return floorPercent(drawn, creditInterestRate(state, player))
 }
 
 /** Lookup by contract id, whatever its status. Deliberately does not filter on status:
@@ -184,13 +226,22 @@ export function fundPeerLoanInterest(state: GameState, loan: PeerLoan): PeerLoan
 }
 
 /**
- * Task 10. drawnCredit - borrowingBase, SIGNED like `creditHeadroom` (its exact
- * negation) — a margin call is a positive shortfall, spec section 5. Deliberately
- * excludes `distressedDebt`: distressed debt sits outside both the drawn balance and
- * the borrowing base (spec 19.8), so it can never itself trigger a breach.
+ * Task 10. drawnCredit - the drawn balance the base will TOLERATE, SIGNED — a margin
+ * call is a positive shortfall, spec section 5. Deliberately excludes `distressedDebt`:
+ * distressed debt sits outside both the drawn balance and the borrowing base (spec
+ * 19.8), so it can never itself trigger a breach.
+ *
+ * era-decks 6.2's `margin-threshold` tightens the tolerance to a fraction of the base
+ * for the players a card names (`Math.min` across live modifiers, so the strictest one
+ * governs). With no such card the threshold is exactly 1 and `floorPercent(base, 1)` is
+ * `base`, making this once again the exact negation of `creditHeadroom`. It stops being
+ * that negation only while a threshold card is live, and that asymmetry is deliberate:
+ * the card tightens when the position is CALLED, not how much may be voluntarily drawn,
+ * so a player already inside their base cannot be pushed over by drawing nothing.
  */
 export function marginShortfall(state: GameState, player: PlayerId): Money {
-  return drawnCredit(state, player) - borrowingBase(state, player)
+  const tolerated = floorPercent(borrowingBase(state, player), marginThreshold(state, player))
+  return drawnCredit(state, player) - tolerated
 }
 
 /** True while the player's drawn balance exceeds their borrowing base. */
@@ -226,10 +277,19 @@ export function liquidationQueue(state: GameState, player: PlayerId): readonly D
  * player through the end of the Open phase of round N+1 to cure, and force-liquidates
  * at the start of the Open phase of round N+2 if still breached. Null if the player
  * carries no flag at all.
+ *
+ * E3-07 ("Covenant Waiver Negotiated") grants a `margin-call-waiver` token that pushes
+ * that deadline out by its `extraRounds`. The extension applies while the token is
+ * held and the position is flagged; `flagMarginCalls` spends the token at the moment
+ * the position CURES, which is the only outcome in which the extra round did any work.
+ * A player who never cures is liquidated on the extended deadline and the token lapses
+ * with the era, which is the same end state as spending it would have produced.
  */
 export function liquidationRound(state: GameState, player: PlayerId): RoundNumber | null {
   const flaggedAt = state.players[player].marginCallFlaggedAt
-  return flaggedAt === null ? null : flaggedAt + 2
+  if (flaggedAt === null) return null
+  const waiver = entitlementOfKind(state, player, 'margin-call-waiver')
+  return flaggedAt + 2 + (waiver === null ? 0 : (waiver.params['extraRounds'] ?? 0))
 }
 
 /**

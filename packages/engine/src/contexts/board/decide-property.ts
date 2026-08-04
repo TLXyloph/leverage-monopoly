@@ -1,5 +1,7 @@
+import { buildingCostMultiplier, entitlementOfKind } from '../../core/card-effects.js'
 import { isRejection, reject, type Rejection } from '../../core/errors.js'
 import type { GameEvent } from '../../core/events.js'
+import { floorPercent } from '../../core/money.js'
 import type { DeedState, GameState } from '../../core/state.js'
 import type { DeedId, Money, PlayerId } from '../../core/types.js'
 import { creditHeadroom } from '../credit/index.js'
@@ -95,6 +97,49 @@ function fundVoluntary(
   return [{ type: 'CreditDrawn', player, amount: needed }]
 }
 
+interface Priced {
+  readonly cost: Money
+  /** Emitted alongside the purchase so `decks` debits the capacity that paid for it. */
+  readonly spends: readonly GameEvent[]
+}
+
+/**
+ * era-decks 6.2 and 6.3 both bear on what a house costs, and they compose in this
+ * order, which is the order the card text implies:
+ *
+ *   1. `building-cost-multiplier`, a live MODIFIER (E2-?? gives everyone 0.75x), scales
+ *      the list price. It is not consumed — a modifier applies until it expires.
+ *   2. `half-price-house`, a one-use ENTITLEMENT voucher, scales what is left.
+ *   3. `building-credit`, a DOLLAR-capacity entitlement, comes off the remainder, and
+ *      spends exactly the dollars it absorbed — never more than the price, so a $200
+ *      credit against a $150 house keeps $50 for the next house.
+ *
+ * Rates before dollars, because a percentage voucher applied after a dollar credit
+ * would silently discount the credit too. Each step floors through `floorPercent`, so
+ * a 0.75x on a $50 house is $37 exactly and never $37.499999.
+ */
+function priceHouse(state: GameState, player: PlayerId, listPrice: Money): Priced {
+  const spends: GameEvent[] = []
+  let cost = floorPercent(listPrice, buildingCostMultiplier(state, player))
+
+  const voucher = entitlementOfKind(state, player, 'half-price-house')
+  if (voucher !== null) {
+    cost = floorPercent(cost, voucher.params['factor'] ?? 1)
+    spends.push({ type: 'EntitlementConsumed', player, entitlement: voucher.id, used: 1 })
+  }
+
+  const credit = entitlementOfKind(state, player, 'building-credit')
+  if (credit !== null && cost > 0) {
+    const applied = Math.min(credit.remaining, cost)
+    if (applied > 0) {
+      cost -= applied
+      spends.push({ type: 'EntitlementConsumed', player, entitlement: credit.id, used: applied })
+    }
+  }
+
+  return { cost, spends }
+}
+
 function decideBuild(
   state: GameState,
   command: Extract<PropertyCommand, { type: 'BuildHouse' }>,
@@ -136,12 +181,13 @@ function decideBuild(
       'The bank has no houses left. Another player is holding the supply.',
     )
   }
-  const cost = buildingCost(deed)
+  const { cost, spends } = priceHouse(state, command.player, buildingCost(deed))
   const funding = fundVoluntary(state, command.player, cost)
   if (isRejection(funding)) return funding
   return [
     ...funding,
     { type: 'HouseBuilt', player: command.player, deed: command.deed, cost },
+    ...spends,
   ]
 }
 
@@ -225,12 +271,27 @@ function decideUnmortgage(
   if (!deed.mortgaged) {
     return reject('DEED_UNAVAILABLE', `${command.deed} is not mortgaged.`)
   }
-  const cost = unmortgageCost(deed)
+  /**
+   * E1-19 ("Mortgage Amnesty"): a one-use `discount-unmortgage` voucher lifts a
+   * mortgage at its `rate` of FACE VALUE (50%) instead of the standard
+   * UNMORTGAGE_RATE (55%) — the card names both numbers as fractions of face, so the
+   * voucher replaces the rate outright rather than discounting the standard cost.
+   */
+  const voucher = entitlementOfKind(state, command.player, 'discount-unmortgage')
+  const cost = voucher === null
+    ? unmortgageCost(deed)
+    : floorPercent(deed.faceValue, voucher.params['rate'] ?? 1)
   const funding = fundVoluntary(state, command.player, cost)
   if (isRejection(funding)) return funding
   return [
     ...funding,
     { type: 'DeedUnmortgaged', player: command.player, deed: command.deed, cost },
+    ...(voucher === null
+      ? []
+      : [{
+        type: 'EntitlementConsumed' as const,
+        player: command.player, entitlement: voucher.id, used: 1,
+      }]),
   ]
 }
 

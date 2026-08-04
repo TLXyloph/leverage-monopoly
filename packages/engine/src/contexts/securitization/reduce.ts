@@ -53,6 +53,14 @@ export function reduceSecuritization(state: GameState, event: GameEvent): GameSt
       return { ...state, pools: [...state.pools, pool] }
     }
 
+    /** era-decks 6.5, the escrow's return leg. See the event's own docstring. */
+    case 'PoolInjectionReleased':
+      return addCash(
+        { ...state, treasury: state.treasury - event.amount },
+        event.originator,
+        event.amount,
+      )
+
     case 'TrancheSold': {
       const next = withPool(state, event.poolId, (p) => ({
         ...p,

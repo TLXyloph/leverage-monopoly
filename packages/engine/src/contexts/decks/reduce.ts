@@ -1,6 +1,7 @@
 import type { GameEvent } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
 import type { PlayerId } from '../../core/types.js'
+import { consumeEntitlement } from '../../core/card-effects.js'
 import type { CardCounters, CardEffectsState } from './effects.js'
 import { applyCard } from './interpret.js'
 import { deckFor } from './cards/index.js'
@@ -63,6 +64,34 @@ function observe(state: GameState, event: GameEvent): GameState {
       })
     case 'PhaseAdvanced':
       return expireOn(state, event.phase)
+    /**
+     * era-decks 6.5 bookkeeping. `decks` owns `cardEffects`, so it is `decks` that
+     * clears the two pending registers once the contexts that act on them have acted:
+     * the escrow entry goes when `securitization` releases it into the waterfall, and
+     * the scheduled-termination entry goes when the pool actually terminates (by ANY
+     * route — a pool that exhausts its assets naturally before its scheduled date must
+     * not leave a stale id behind for a later pool to collide with).
+     */
+    case 'PoolInjectionReleased':
+      return {
+        ...state,
+        cardEffects: {
+          ...state.cardEffects,
+          poolInjections: Object.fromEntries(
+            Object.entries(state.cardEffects.poolInjections)
+              .filter(([poolId]) => poolId !== event.poolId),
+          ),
+        },
+      }
+    case 'PoolTerminated':
+      return {
+        ...state,
+        cardEffects: {
+          ...state.cardEffects,
+          scheduledPoolTerminations:
+            state.cardEffects.scheduledPoolTerminations.filter((id) => id !== event.poolId),
+        },
+      }
     default:
       return state
   }
@@ -112,6 +141,15 @@ export function reduceDecks(state: GameState, event: GameEvent): GameState {
         decks: { ...applied.decks, [event.era]: { ...deck, drawn: deck.drawn + 1 } },
       }
     }
+    /**
+     * The only writer of entitlement capacity outside a card draw. `decks` owns
+     * `cardEffects`, so every context that spends an entitlement emits this and lets
+     * this case do the write — see the event's own docstring. `expireOn` drops any
+     * entitlement whose `remaining` reaches 0 at the next phase boundary.
+     */
+    case 'EntitlementConsumed':
+      return consumeEntitlement(observed, event.entitlement, event.used)
+
     case 'DeckReordered': {
       const deck = observed.decks[event.era]
       return {

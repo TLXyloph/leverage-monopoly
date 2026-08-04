@@ -87,8 +87,14 @@ describe('runSettlement', () => {
     ]
     const auditDice = { P1: [2, 3] as const }
     runSettlement(scoringState({ round: 20 }), { auditDice, roundEvents })
+    // The waterfall step is handed the round's events PLUS everything Settlement has
+    // emitted so far this pass — the `PoolInjectionReleased` events released by the
+    // step immediately before it are card-injected pool cash that step 6 must
+    // distribute, and they do not exist in the caller's fixed `roundEvents` snapshot.
     expect(vi.mocked(securitization.settleSecuritization))
-      .toHaveBeenCalledWith(expect.anything(), roundEvents)
+      .toHaveBeenCalledWith(expect.anything(), expect.arrayContaining([...roundEvents]))
+    const [, seen] = vi.mocked(securitization.settleSecuritization).mock.calls[0] ?? []
+    expect((seen ?? []).slice(0, roundEvents.length)).toEqual(roundEvents)
     expect(vi.mocked(underworld.settleAudits))
       .toHaveBeenCalledWith(expect.anything(), auditDice)
   })

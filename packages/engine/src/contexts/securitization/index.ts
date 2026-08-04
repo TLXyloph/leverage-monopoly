@@ -6,8 +6,9 @@ export {
 
 export type { Distribution } from './waterfall.js'
 export {
-  collateralLiquidationEvents, collectedThisRound, distribute, settleSecuritization,
-  terminateAllPools, terminationEvents, waterfallEvents,
+  collateralLiquidationEvents, collectedThisRound, distribute, releasePoolInjections,
+  settleSecuritization, terminateAllPools, terminateScheduledPools, terminationEvents,
+  waterfallEvents,
 } from './waterfall.js'
 
 export { reduceSecuritization } from './reduce.js'

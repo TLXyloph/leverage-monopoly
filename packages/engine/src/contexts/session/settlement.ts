@@ -10,7 +10,8 @@ import {
   settlePeerLoans,
 } from '../credit/index.js'
 import {
-  settleSecuritization, settleSwapPremiums, terminateAllPools,
+  releasePoolInjections, settleSecuritization, settleSwapPremiums, terminateAllPools,
+  terminateScheduledPools,
 } from '../securitization/index.js'
 import { scoreGame } from './scoring.js'
 
@@ -24,7 +25,13 @@ export interface SettlementInput {
   readonly roundEvents: readonly GameEvent[]
 }
 
-type Step = (state: GameState) => readonly GameEvent[] | Rejection
+/**
+ * `emitted` is every event the Settlement has produced so far this pass. Step 6 needs
+ * it: the card-injected pool cash it must distribute is released by the step immediately
+ * before it, and `input.roundEvents` is a fixed snapshot taken before Settlement began,
+ * so a step that read only that snapshot could never see it.
+ */
+type Step = (state: GameState, emitted: readonly GameEvent[]) => readonly GameEvent[] | Rejection
 
 /** Spec 19.1, verbatim, for the rulebook generator and the ordering test. */
 export const SETTLEMENT_STEPS: readonly string[] = [
@@ -48,7 +55,12 @@ function steps(input: SettlementInput): readonly Step[] {
     (s) => settleCarryingCost(s),
     (s) => settleCreditInterest(s),
     (s) => settlePeerLoans(s),
-    (s) => settleSecuritization(s, input.roundEvents),
+    // era-decks 6.5, sequenced around step 6: release card-escrowed cash so the
+    // waterfall can distribute it, run step 6, then close any pool a card scheduled
+    // for termination — in that order, so an injected pool pays out before it winds up.
+    (s) => releasePoolInjections(s),
+    (s, emitted) => settleSecuritization(s, [...input.roundEvents, ...emitted]),
+    (s) => terminateScheduledPools(s),
     (s) => settleSwapPremiums(s),
     (s) => settleDistressedDebt(s),
     (s) => settleAudits(s, input.auditDice),
@@ -75,7 +87,7 @@ function fold(
   let current = state
   const emitted: GameEvent[] = []
   for (const step of ordered) {
-    const produced = step(current)
+    const produced = step(current, emitted)
     if (isRejection(produced)) return produced
     for (const event of produced) {
       current = reduce(current, event)

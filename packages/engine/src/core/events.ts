@@ -76,7 +76,12 @@ export type GameEvent =
   | { type: 'MarginCallFlagged'; player: PlayerId; shortfall: Money }
   | { type: 'MarginCallCured'; player: PlayerId }
   | { type: 'DeedLiquidated'; player: PlayerId; deed: DeedId; buyer: PlayerId | 'bank'; price: Money }
-  | { type: 'DistressedDebtIncurred'; player: PlayerId; amount: Money }
+  /* `DistressedDebtIncurred` was declared here and reduced by `markets`, but no
+   * emitter ever existed: spec 19.7 reserves distressed debt for the terminal state
+   * after forced liquidation exhausts a portfolio, which `credit` reaches through
+   * `CreditWrittenDown`. A reachable-looking event with no emitter invites a future
+   * caller to route a shortfall through it and silently break conservation — which is
+   * exactly what Task 20 found and fixed once already — so it is deleted. */
   | { type: 'DistressedDebtAccrued'; player: PlayerId; amount: Money }
   | { type: 'DistressedDebtRepaid'; player: PlayerId; amount: Money }
   /** Drawn credit that liquidation could not clear, converted to distressed debt. */
@@ -119,6 +124,16 @@ export type GameEvent =
       deeds: readonly DeedId[]; proceeds: Money }
   | { type: 'PoolTerminated'; poolId: ContractId
       shortfalls: readonly { tranche: Tranche['kind']; shortfall: Money }[] }
+  /**
+   * era-decks 6.5. A card made the pool's equity holder or originator inject cash;
+   * `GameState` carries no pool cash balance, so the payment was escrowed into the
+   * Treasury at draw time and recorded in `cardEffects.poolInjections`. This releases
+   * it to the originator immediately before Settlement step 6, where
+   * `collectedThisRound` counts it into that pool's waterfall like any other cash the
+   * pool's assets collected. Treasury out, originator's clean cash in — the exact
+   * reverse of the escrow, so the round trip is money-neutral.
+   */
+  | { type: 'PoolInjectionReleased'; poolId: ContractId; originator: PlayerId; amount: Money }
   | { type: 'SwapWritten'; id: ContractId; buyer: PlayerId; seller: PlayerId
       reference: SwapReference; notional: Money; premiumPerRound: Money }
   | { type: 'SwapPremiumPaid'; id: ContractId; amount: Money }
@@ -149,6 +164,18 @@ export type GameEvent =
   /** E3-05's private reveal-and-reorder. A deliberate player choice, not randomness —
    * see STOCHASTIC_EVENTS below, which deliberately excludes it. */
   | { type: 'DeckReordered'; era: Era; order: readonly number[]; player: PlayerId }
+  /**
+   * era-decks 6.3. A card entitlement spent: `used` units come off its remaining
+   * capacity — one "use" for count-based rights like the half-price house voucher,
+   * dollars for capacity-based ones like the $200 building credit or the $400 dirty
+   * amnesty.
+   *
+   * Emitted by whichever decider PRICED the discount, and applied only by
+   * `reduceDecks`. Deciders never mutate; that split is what makes a replayed log spend
+   * exactly what the live game spent, and it is why `consumeEntitlement` is a reducer
+   * helper rather than something a decider calls directly.
+   */
+  | { type: 'EntitlementConsumed'; player: PlayerId; entitlement: string; used: number }
 
 export type EventType = GameEvent['type']
 

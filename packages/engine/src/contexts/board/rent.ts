@@ -1,4 +1,6 @@
 import { GROUP_MEMBERS, RAILROAD_RENT, UTILITY_MULTIPLIER } from '../../config/board.js'
+import { rentMultiplier } from '../../core/card-effects.js'
+import { floorPercent } from '../../core/money.js'
 import type { DeedState, GameState, RentFuture } from '../../core/state.js'
 import type { ColorGroup, DeedId, DiceRoll, Money, PlayerId } from '../../core/types.js'
 import { diceTotal } from './selectors.js'
@@ -38,7 +40,8 @@ export function ownsWholeGroup(
   })
 }
 
-export function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money {
+/** The board's own rent formula, before any card modifier. */
+function baseRentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money {
   const deed = state.deeds[deedId]
   if (deed === undefined) return 0
   const owner = collectingOwner(deed)
@@ -57,6 +60,25 @@ export function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money
   }
   const base = deed.rentTable[0] ?? 0
   return ownsWholeGroup(state, deed.group, owner) ? base * 2 : base
+}
+
+/**
+ * The rent actually charged. era-decks 6.2: every live `rent-multiplier` card modifier
+ * composes multiplicatively against the board's own formula, in card-draw order, and a
+ * SINGLE flooring happens at the end — `rentMultiplier` returns the composed factor and
+ * `floorPercent` does the exact multiply, so a 1.5x on a $14 rent is $21 and never
+ * $20.999999. A deed with no modifier on it returns a factor of exactly 1, which
+ * `floorPercent` leaves untouched, so the uncarded game is bit-identical to before.
+ *
+ * Applied here rather than at the emission site so that every reader of "what does this
+ * deed charge" — `board/decide.ts`'s landing resolution, `markets`' rent-future
+ * valuation, the assist panel — sees the same number. A modifier that raised the charge
+ * but not the valuation would let a card mint value out of the mark-to-model.
+ */
+export function rentDue(state: GameState, deedId: DeedId, dice: DiceRoll): Money {
+  const base = baseRentDue(state, deedId, dice)
+  if (base <= 0) return base
+  return floorPercent(base, rentMultiplier(state, deedId))
 }
 
 export function activeFutureOn(state: GameState, deedId: DeedId): RentFuture | null {

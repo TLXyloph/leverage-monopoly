@@ -1,12 +1,13 @@
 import { ECONOMY } from '../../config/economy.js'
+import { entitlementOfKind } from '../../core/card-effects.js'
 import type { GameEvent, ObligationKind } from '../../core/events.js'
 import type { GameState, PeerLoan } from '../../core/state.js'
 import type { Money, PlayerId } from '../../core/types.js'
 import { reduceCredit } from './reduce.js'
 import { reducePeerLoans } from './reduce-loans.js'
 import {
-  carryingCostFor, creditInterestDue, distressedInterestDue, fundPeerLoanInterest,
-  liquidationQueue, marginShortfall, prevailingRate, unmortgagedDeedCount,
+  carryingCostFor, creditInterestDue, creditInterestRate, distressedInterestDue,
+  fundPeerLoanInterest, liquidationQueue, marginShortfall, unmortgagedDeedCount,
 } from './selectors.js'
 
 /** Era II opens at the round after Era I ends. Spec section 2. */
@@ -73,14 +74,17 @@ export function settleCarryingCost(state: GameState): readonly GameEvent[] {
  * (spec 19.8), never all-or-nothing. `InterestAccrued` itself carries no `capitalised`
  * flag; whether any of it capitalised is visible only via a paired ObligationCapitalised
  * event, exactly as for carrying cost.
+ *
+ * The rate is read PER PLAYER, not once for the round: era-decks 6.2 lets a card
+ * override one player's rate or waive their interest entirely, and the emitted event
+ * must carry the rate that was actually applied or the log misreports the charge.
  */
 export function settleCreditInterest(state: GameState): readonly GameEvent[] {
-  const rate = prevailingRate(state)
   const events: GameEvent[] = []
   for (const player of state.config.turnOrder) {
     const amount = creditInterestDue(state, player)
     if (amount === 0) continue
-    events.push({ type: 'InterestAccrued', player, amount, rate })
+    events.push({ type: 'InterestAccrued', player, amount, rate: creditInterestRate(state, player) })
     capitalise(events, player, state.players[player].cleanCash, amount, 'interest')
   }
   return events
@@ -122,6 +126,12 @@ export function flagMarginCalls(state: GameState): readonly GameEvent[] {
       events.push({ type: 'MarginCallFlagged', player, shortfall })
     } else if (shortfall <= 0 && p.marginCallFlaggedAt !== null) {
       events.push({ type: 'MarginCallCured', player })
+      // E3-07: the waiver token bought this player the extra round they cured in, so
+      // it is spent now. See `liquidationRound` for why cure is the consumption point.
+      const waiver = entitlementOfKind(state, player, 'margin-call-waiver')
+      if (waiver !== null) {
+        events.push({ type: 'EntitlementConsumed', player, entitlement: waiver.id, used: 1 })
+      }
     }
   }
   return events

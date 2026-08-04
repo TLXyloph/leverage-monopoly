@@ -1,6 +1,7 @@
 import type { Money } from '../../core/types.js'
 import type { GameState, Pool, Tranche } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
+import { pendingPoolInjections, scheduledPoolTerminations } from '../../core/card-effects.js'
 import { collateralLiquidationProceeds, findPeerLoan } from '../credit/index.js'
 import { assetKey, poolIsExhausted, trancheOf } from './selectors.js'
 import { reduceSecuritization } from './reduce.js'
@@ -64,6 +65,12 @@ export function collectedThisRound(pool: Pool, roundEvents: readonly GameEvent[]
         break
       case 'PoolCollateralLiquidated':
         if (e.poolId === pool.id) total += e.proceeds
+        break
+      // era-decks 6.5. Cash a card forced into this pool, released from Treasury
+      // escrow by `session/settlement.ts` immediately before this step. It is
+      // collected cash like any other, so it distributes down the same waterfall.
+      case 'PoolInjectionReleased':
+        if (e.poolId === pool.id) total += e.amount
         break
       default:
         break
@@ -227,5 +234,40 @@ export function settleSecuritization(
 export function terminateAllPools(state: GameState): readonly GameEvent[] {
   return state.pools
     .filter((p) => !p.terminated)
+    .flatMap((pool) => terminationEventsWithSwaps(state, pool))
+}
+
+/**
+ * era-decks 6.5, first half. Releases every card-escrowed injection to its pool's
+ * originator so Settlement step 6 can distribute it. Emitted BEFORE step 6, and only
+ * for pools that are still live — an injection into a pool that has since terminated
+ * has nowhere to go, and the escrow simply stays with the Treasury.
+ *
+ * Ordered by `state.pools`, which is append-only, so replay is exact regardless of the
+ * insertion order of the `poolInjections` record.
+ */
+export function releasePoolInjections(state: GameState): readonly GameEvent[] {
+  const pending = pendingPoolInjections(state)
+  return state.pools
+    .filter((p) => !p.terminated && (pending[p.id] ?? 0) > 0)
+    .map((p) => ({
+      type: 'PoolInjectionReleased' as const,
+      poolId: p.id,
+      originator: p.originator,
+      amount: pending[p.id] ?? 0,
+    }))
+}
+
+/**
+ * era-decks 6.5, second half. Terminates every pool a card scheduled to wind down,
+ * with the same shortfall-and-CDS treatment as any other termination. Runs AFTER step
+ * 6 so a pool that was both injected into and scheduled for termination pays its
+ * injection down the waterfall before it closes — which is the sequence the cards
+ * that do both describe.
+ */
+export function terminateScheduledPools(state: GameState): readonly GameEvent[] {
+  const scheduled = new Set(scheduledPoolTerminations(state))
+  return state.pools
+    .filter((p) => !p.terminated && scheduled.has(p.id))
     .flatMap((pool) => terminationEventsWithSwaps(state, pool))
 }
