@@ -3,6 +3,7 @@ import type { GameEvent } from '../../core/events.js'
 import type { GameConfig, GameState } from '../../core/state.js'
 import type { Phase } from '../../core/types.js'
 import { reject, type Rejection } from '../../core/errors.js'
+import { advanceEraIIStimulus } from '../credit/index.js'
 import { eraForRound } from './selectors.js'
 import type { SettlementInput } from './settlement.js'
 import { runFinalSettlement, runSettlement } from './settlement.js'
@@ -61,6 +62,15 @@ export function decideSession(
     const events: GameEvent[] = [{ type: 'RoundAdvanced', round }]
     if (era !== state.era) events.push({ type: 'EraAdvanced', era })
     events.push({ type: 'PhaseAdvanced', phase: 'market' })
+    // Spec section 4: the Era II stimulus advances "at the start of round 7," the
+    // instant the Market phase of round 7 opens. `credit/settlement.ts`'s own
+    // docstring says this is "Called by `session` on entering the Market phase," but
+    // Task 20 found no call site anywhere in the engine — the function existed,
+    // was unit-tested in isolation, and was never wired in, so no game ever actually
+    // advanced it. Checked against the state this batch is ABOUT to produce (`round`
+    // and phase `'market'`), not the state before it, since `advanceEraIIStimulus`'s
+    // own guard reads both.
+    events.push(...advanceEraIIStimulus({ ...state, round, phase: 'market' }))
     return events
   }
   const next = NEXT_WITHIN_ROUND[state.phase]

@@ -97,10 +97,19 @@ describe('phase and round advancement', () => {
       round: 6,
       era: 1,
     }
+    // Round 7 is STIMULUS_ROUND (Task 20 correction): `advanceEraIIStimulus` was
+    // defined and unit-tested from Task 9 onward but never wired into `decideSession`,
+    // so no game ever actually advanced the Era II stimulus. It now fires in the same
+    // batch as the phase advance that opens round 7's Market phase, one event per
+    // player in turn order.
     expect(events(state)).toEqual([
       { type: 'RoundAdvanced', round: 7 },
       { type: 'EraAdvanced', era: 2 },
       { type: 'PhaseAdvanced', phase: 'market' },
+      { type: 'StimulusAdvanced', player: 'P1', amount: ECONOMY.ERA_II_STIMULUS },
+      { type: 'StimulusAdvanced', player: 'P2', amount: ECONOMY.ERA_II_STIMULUS },
+      { type: 'StimulusAdvanced', player: 'P3', amount: ECONOMY.ERA_II_STIMULUS },
+      { type: 'StimulusAdvanced', player: 'P4', amount: ECONOMY.ERA_II_STIMULUS },
     ])
   })
 
