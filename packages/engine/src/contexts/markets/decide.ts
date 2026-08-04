@@ -3,6 +3,7 @@ import type { ContractId, DeedId, Money, PlayerId, RoundNumber } from '../../cor
 import type { GameState } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { type Rejection, reject } from '../../core/errors.js'
+import { reduceProperty } from '../board/index.js'
 import { type DeedOptionCommand, decideDeedOptions } from './decide-options.js'
 import { futureFor, poolHoldingRentFuture, rentFutureMakeWhole } from './selectors.js'
 
@@ -181,18 +182,36 @@ export function expireRentFutures(state: GameState): readonly GameEvent[] {
 
 /**
  * Spec section 6. Mortgaging an encumbered property owes the holder the contract's
- * remaining expected value and terminates the contract. Called by the mortgage
- * decider against the state BEFORE DeedMortgaged is applied — the make-whole
- * VALUATION must be against the pre-mortgage state (a mortgaged deed values at
- * zero, so valuing after the fact would always yield $0 and reopen the exploit).
+ * remaining expected value and terminates the contract.
  *
- * The shortfall that capitalises is computed against the owner's ACTUAL
- * pre-mortgage clean cash, not a hypothetical cash-plus-mortgage-proceeds figure:
- * crediting the future proceeds here as well as via the eventual DeedMortgaged
- * event would double-count them, manufacturing money equal to the mortgage
- * proceeds every time a shortfall occurs. Using actual cash keeps this task's own
- * events conserved with no Treasury leg, independent of when or whether
- * DeedMortgaged is later applied.
+ * Two different states are in play here, and conflating them was a money leak.
+ *
+ * VALUATION is against `state`, the state BEFORE `DeedMortgaged` is applied: a
+ * mortgaged deed collects no rent and so values every contract on it at zero, and
+ * valuing after the fact would always yield $0 and reopen the exploit.
+ *
+ * PRICING the shortfall is against `applied.reduce(reduceProperty, state)` — the
+ * state this function's own events will actually be reduced against, which is
+ * `state` plus whatever the caller has already emitted ahead of them in the same
+ * batch (in practice the `DeedMortgaged` event itself, whose proceeds land in the
+ * owner's clean cash). This is the discipline Task 20 established in
+ * `securitization/swaps.ts`'s `settleSwapPremiums`, applied across a batch instead
+ * of across a loop: price every shortfall against the folded state, never against
+ * the caller's stale snapshot.
+ *
+ * Pricing against the pre-mortgage cash instead — as this did until the leak was
+ * found — put the decider and the reducer in disagreement, because
+ * `reduce.ts`'s `RentFutureMadeWhole` case clamps the owner's debit with `transfer`
+ * against their POST-`DeedMortgaged` cash. `ObligationCapitalised` then added a gap
+ * the reducer had not actually left unpaid, and the conserved total moved by
+ * exactly `clamped_shortfall - gap`. Folding the batch is what makes the two agree
+ * by construction rather than by assertion. It is NOT double-counting the proceeds:
+ * they are read, not credited — `DeedMortgaged` remains their only cash leg.
+ *
+ * It is also the sequence `board`'s mortgage decider already documents ("sequenced
+ * after the proceeds arrive"): the mortgage proceeds are what funds the make-whole,
+ * so an owner cannot capitalise debt while sitting on cash the mortgage just paid
+ * them.
  *
  * The gap capitalises via `ObligationCapitalised { obligation: 'make-whole' }`
  * rather than `DistressedDebtIncurred`: spec 19.7 reserves distressed debt for the
@@ -202,7 +221,7 @@ export function expireRentFutures(state: GameState): readonly GameEvent[] {
  * and interest (spec 19.8). Task 20 found and fixed the original routing.
  */
 export function makeWholeOnMortgage(
-  state: GameState, deed: DeedId,
+  state: GameState, deed: DeedId, applied: readonly GameEvent[] = [],
 ): readonly GameEvent[] {
   const f = futureFor(state, deed)
   if (f === null) return []
@@ -213,7 +232,8 @@ export function makeWholeOnMortgage(
   }
   const amount = rentFutureMakeWhole(state, deed)
   const events: GameEvent[] = [{ type: 'RentFutureMadeWhole', id: f.id, amount }]
-  const gap = amount - state.players[d.owner].cleanCash
+  const priced = applied.reduce(reduceProperty, state)
+  const gap = amount - priced.players[d.owner].cleanCash
   if (gap > 0) {
     events.push({
       type: 'ObligationCapitalised', player: d.owner, amount: gap, obligation: 'make-whole',

@@ -19,10 +19,16 @@ import {
  */
 export interface PropertyPorts {
   /**
-   * Spec section 6. Called against the state BEFORE DeedMortgaged is applied,
-   * because a mortgaged deed collects no rent and values every contract at zero.
+   * Spec section 6. `state` is the state BEFORE DeedMortgaged is applied, because a
+   * mortgaged deed collects no rent and values every contract at zero. `applied` is
+   * the events this batch has already emitted ahead of the make-whole; the port folds
+   * them to price the owner's shortfall against the same cash the reducer will clamp
+   * the debit against. Passing an empty `applied` when the batch is not in fact empty
+   * is the money leak this parameter exists to close.
    */
-  readonly makeWholeOnMortgage: (state: GameState, deed: DeedId) => readonly GameEvent[]
+  readonly makeWholeOnMortgage: (
+    state: GameState, deed: DeedId, applied: readonly GameEvent[],
+  ) => readonly GameEvent[]
   /** Spec section 9. A DEED_ENCUMBERED rejection while an option is outstanding. */
   readonly assertDeedTransferable: (state: GameState, deed: DeedId) => Rejection | null
 }
@@ -250,16 +256,21 @@ function decideMortgage(
   }
   const locked = ports.assertDeedTransferable(state, command.deed)
   if (locked !== null) return locked
-  // Valued against the pre-mortgage state, sequenced after the proceeds arrive.
-  return [
-    {
-      type: 'DeedMortgaged',
-      player: command.player,
-      deed: command.deed,
-      proceeds: mortgageProceeds(deed),
-    },
-    ...ports.makeWholeOnMortgage(state, command.deed),
-  ]
+  /*
+   * Valued against the pre-mortgage state, sequenced after the proceeds arrive — and
+   * the proceeds are what funds the make-whole, so `mortgaged` is handed to the port
+   * as the batch it must fold before pricing the owner's shortfall. Emitting it and
+   * pricing against the untouched `state` is what leaked money: the reducer clamps the
+   * owner's debit against their post-mortgage cash, so a shortfall priced against
+   * pre-mortgage cash capitalised a gap the reducer never left unpaid.
+   */
+  const mortgaged: GameEvent = {
+    type: 'DeedMortgaged',
+    player: command.player,
+    deed: command.deed,
+    proceeds: mortgageProceeds(deed),
+  }
+  return [mortgaged, ...ports.makeWholeOnMortgage(state, command.deed, [mortgaged])]
 }
 
 function decideUnmortgage(

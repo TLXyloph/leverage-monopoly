@@ -42,12 +42,25 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
     }
 
     /**
-     * Mortgage-triggered make-whole. The holder is made whole in full regardless of
-     * the owner's cash on hand; `decide.ts`'s `makeWholeOnMortgage` computes `amount`
-     * as exactly what the owner can pay plus a paired `ObligationCapitalised {
-     * obligation: 'make-whole' }` for the shortfall, so the two events together
-     * conserve money with no Treasury leg. The capitalised leg is reduced by
-     * `credit`'s `reduceCredit`, which runs before this reducer in `core/reduce.ts`.
+     * Mortgage-triggered make-whole. `event.amount` is the contract's full remaining
+     * expected value; the holder is credited all of it regardless of the owner's cash
+     * on hand, and `transfer` (board) floors the owner's debit at their clean cash.
+     *
+     * What conserves money is that the shortfall `transfer` clamps away here is the
+     * SAME number `decide.ts`'s `makeWholeOnMortgage` capitalised into the paired
+     * `ObligationCapitalised { obligation: 'make-whole' }`. That agreement is not an
+     * assumption this comment asks the reader to take on trust — it is arranged at the
+     * source: `makeWholeOnMortgage` prices the gap against the state produced by
+     * folding the batch's already-emitted events (`DeedMortgaged` and its proceeds)
+     * through `reduceProperty`, which is exactly the cash this case sees. The earlier
+     * version of this docstring asserted the agreement while the decider priced against
+     * the PRE-mortgage snapshot; the two disagreed by the covered part of the shortfall
+     * and the conserved total moved on every mortgage of an encumbered deed the owner
+     * could not cover from pre-mortgage cash alone.
+     *
+     * The capitalised leg is reduced by `credit`'s `reduceCredit`, which runs before
+     * this reducer in `core/reduce.ts`. No Treasury leg either way — both legs are
+     * player-to-player.
      */
     case 'RentFutureMadeWhole': {
       const f = state.futures.find((x) => x.id === event.id)

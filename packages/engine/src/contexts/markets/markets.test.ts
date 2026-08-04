@@ -20,6 +20,7 @@ import {
 } from './selectors.js'
 import { reduceMarkets } from './reduce.js'
 import { reduce as reduceRoot } from '../../core/reduce.js'
+import { decidePropertyAction } from '../../core/decide.js'
 
 describe('rent future valuation kernel', () => {
   it('converts a per-roll probability to expected hits per round (spec 19.2)', () => {
@@ -464,12 +465,13 @@ describe('mortgaging an encumbered property', () => {
   })
 
   it('capitalises an unaffordable make-whole into drawn credit', () => {
-    // CORRECTION beyond the brief: the shortfall is computed against the owner's
-    // ACTUAL pre-mortgage clean cash (here $0), not cash-plus-mortgage-proceeds. The
-    // brief's own formula (amount - proceeds) double-counts the proceeds once here
-    // and again when DeedMortgaged eventually credits them, manufacturing money equal
-    // to the mortgage proceeds on every shortfall. See the money-conservation block
-    // below, which fails under the brief's original formula and passes under this one.
+    // The shortfall is priced against the state the events will actually be reduced
+    // against: `state` folded with whatever the caller has already emitted this batch.
+    // Here that batch is empty, so the pricing state IS `state` and the gap is the
+    // owner's full $0 of clean cash. The mortgage path passes its own `DeedMortgaged`
+    // instead — see the deterministic conservation block at the end of this file, and
+    // `makeWholeOnMortgage`'s docstring for why reading the proceeds is not
+    // double-counting them (`DeedMortgaged` remains their only cash leg).
     //
     // Task 20 CORRECTION: the shortfall capitalises via ObligationCapitalised, not
     // DistressedDebtIncurred — spec 19.7 reserves distressed debt for the terminal
@@ -613,5 +615,70 @@ describe('money conservation (Global Constraint: no Treasury leg for markets)', 
     const after = applyAllAcrossContexts(before, events)
     expect(totalMoney(after)).toBe(totalMoney(before))
     expect(after.treasury).toBe(before.treasury)
+  })
+})
+
+/**
+ * The pre-existing leak the `conservation` property found at `FC_SEED=8675309` (and
+ * 31337) once its budget was raised to ~6000 runs: a $1 drop on the batch
+ * `DeedMortgaged, RentFutureMadeWhole, ObligationCapitalised, RentFutureExpired`.
+ *
+ * The decider priced the make-whole shortfall against the owner's PRE-mortgage clean
+ * cash while `reduce.ts`'s `RentFutureMadeWhole` case clamped the owner's debit (via
+ * board's `transfer`) against their POST-`DeedMortgaged` cash. `ObligationCapitalised`
+ * then added a gap the reducer had not left unpaid, and the conserved total moved by
+ * `clamped_shortfall - gap` every time.
+ *
+ * A property test that needs thousands of runs and a specific seed to surface a bug is
+ * not a regression guard, so the scenario is pinned deterministically here: an owner
+ * whose clean cash is short of the make-whole before the mortgage and comfortably
+ * clear of it afterwards. Both assertions below fail if the decider goes back to
+ * pricing against the pre-mortgage snapshot.
+ */
+describe('mortgaging a deed whose make-whole the pre-mortgage cash cannot cover', () => {
+  /** Deliberately just below the $9 make-whole on an undeveloped St. James Place. */
+  const OWNER_CASH = 8
+
+  function scenario(): GameState {
+    return testState({ round: 10, cash: { P1: OWNER_CASH }, futures: [CONTRACT] })
+  }
+
+  it('prices the shortfall against the proceeds the batch has already paid out', () => {
+    const before = scenario()
+    const amount = markRentFuture(before, CONTRACT.id)
+    const { proceeds } = mortgageImpact(before, 'st-james-place')
+    expect(amount).toBeGreaterThan(OWNER_CASH)
+    expect(OWNER_CASH + proceeds).toBeGreaterThanOrEqual(amount)
+
+    const mortgaged: GameEvent = {
+      type: 'DeedMortgaged', player: 'P1', deed: 'st-james-place', proceeds,
+    }
+    // Nothing capitalises: once the proceeds have landed the owner CAN pay in full,
+    // which is precisely the cash `transfer` will see when it clamps the debit.
+    expect(makeWholeOnMortgage(before, 'st-james-place', [mortgaged])).toEqual([
+      { type: 'RentFutureMadeWhole', id: CONTRACT.id, amount },
+      { type: 'RentFutureExpired', id: CONTRACT.id },
+    ])
+  })
+
+  it('conserves money end to end through the real mortgage decider', () => {
+    const before = scenario()
+    const events = decidePropertyAction(before, {
+      type: 'MortgageDeed', player: 'P1', deed: 'st-james-place',
+    })
+    expect(isRejection(events)).toBe(false)
+    if (isRejection(events)) return
+
+    // Asserted FIRST and on its own: this is the invariant that broke, and it must be
+    // what fails if the decider regresses — not an incidental event-list mismatch.
+    const after = applyAllAcrossContexts(before, events)
+    expect(totalMoney(after)).toBe(totalMoney(before))
+
+    expect(events.map((e) => e.type)).toEqual([
+      'DeedMortgaged', 'RentFutureMadeWhole', 'RentFutureExpired',
+    ])
+    expect(after.treasury).toBe(before.treasury - mortgageImpact(before, 'st-james-place').proceeds)
+    // The proceeds funded the make-whole, so no phantom debt was capitalised alongside.
+    expect(after.players.P1.drawnCredit).toBe(before.players.P1.drawnCredit)
   })
 })
