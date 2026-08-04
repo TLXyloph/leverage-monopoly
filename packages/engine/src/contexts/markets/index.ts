@@ -10,9 +10,14 @@ export {
 
 export type { MortgageImpact, RentPayment } from './selectors.js'
 export {
+  assertDeedTransferable,
+  deedOptionRefund,
   futureFor,
+  isDeedLocked,
   isEncumbered,
+  markDeedOption,
   mortgageImpact,
+  outstandingOption,
   rentEvents,
   rentFutureMakeWhole,
   rentPayment,
@@ -27,4 +32,10 @@ export {
   rentFutureId,
 } from './decide.js'
 
+export type {
+  DeedOptionCommand, ExerciseDeedOption, SellDeedOption, WriteDeedOption,
+} from './decide-options.js'
+export { decideDeedOptions, deedOptionId, lapseDeedOptions } from './decide-options.js'
+
 export { reduceMarkets } from './reduce.js'
+export { reduceDeedOptions } from './reduce-options.js'

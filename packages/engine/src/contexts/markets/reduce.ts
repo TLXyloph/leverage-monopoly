@@ -2,6 +2,7 @@ import type { GameState, PlayerState, RentFuture } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import type { PlayerId } from '../../core/types.js'
 import { transfer } from '../board/index.js'
+import { reduceDeedOptions } from './reduce-options.js'
 
 function withPlayer(
   state: GameState,
@@ -86,6 +87,6 @@ export function reduceMarkets(state: GameState, event: GameEvent): GameState {
       return state
 
     default:
-      return state
+      return reduceDeedOptions(state, event)
   }
 }

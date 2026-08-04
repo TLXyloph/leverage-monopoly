@@ -1,8 +1,9 @@
 import { ECONOMY } from '../../config/economy.js'
 import { floorPercent } from '../../core/money.js'
 import type { ContractId, DeedId, Money, PlayerId } from '../../core/types.js'
-import type { GameState, RentFuture } from '../../core/state.js'
+import type { DeedOption, GameState, RentFuture } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
+import { type Rejection, reject } from '../../core/errors.js'
 import { activeFutureOn, rentRecipient } from '../board/index.js'
 import { borrowingBase } from '../credit/index.js'
 import { markRentFuture } from './valuation.js'
@@ -137,4 +138,54 @@ export function mortgageImpact(state: GameState, deed: DeedId): MortgageImpact {
     drawn,
     marginCalled: drawn > baseAfter,
   }
+}
+
+/**
+ * The outstanding option on this deed, if any. A deed carries at most one at a time —
+ * `decideWrite` (decide-options.ts) enforces that before emitting `DeedOptionWritten` —
+ * so `.find` is unambiguous. Mirrors `futureFor` above.
+ */
+export function outstandingOption(state: GameState, deed: DeedId): DeedOption | null {
+  return state.options.find((o) => o.deed === deed) ?? null
+}
+
+/**
+ * Spec section 9: while an option is outstanding the writer may not sell, trade or
+ * mortgage the underlying deed. Forced liquidation is deliberately NOT gated by this —
+ * see `credit/decide.ts`'s `extinguishmentEvents` for why locking liquidation would let
+ * a distressed player write a $1 option on every deed and become judgment-proof.
+ */
+export function isDeedLocked(state: GameState, deed: DeedId): boolean {
+  return outstandingOption(state, deed) !== null
+}
+
+/** The guard Task 9/10's mortgage and trade deciders call before acting on a deed. */
+export function assertDeedTransferable(state: GameState, deed: DeedId): Rejection | null {
+  if (!isDeedLocked(state, deed)) return null
+  return reject(
+    'DEED_ENCUMBERED',
+    'This deed has an outstanding option and cannot be sold, traded or mortgaged.',
+  )
+}
+
+/**
+ * Spec section 12 mark-to-model: max(0, deed face value - strike). Two integers, so
+ * nothing here rounds.
+ */
+export function markDeedOption(state: GameState, id: ContractId): Money {
+  const o = state.options.find((x) => x.id === id)
+  if (o === undefined) return 0
+  const d = state.deeds[o.deed]
+  if (d === undefined) return 0
+  return Math.max(0, d.faceValue - o.strike)
+}
+
+/**
+ * Port declared by Task 10 (`credit`'s `CreditPorts.deedOptionRefund`). The premium to
+ * refund the holder when this deed's outstanding option is extinguished by forced
+ * liquidation (spec 19.12), or 0 if there is none.
+ */
+export function deedOptionRefund(state: GameState, deed: DeedId): Money {
+  const o = outstandingOption(state, deed)
+  return o === null ? 0 : o.premium
 }

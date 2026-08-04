@@ -3,6 +3,7 @@ import type { ContractId, DeedId, Money, PlayerId, RoundNumber } from '../../cor
 import type { GameState } from '../../core/state.js'
 import type { GameEvent } from '../../core/events.js'
 import { type Rejection, reject } from '../../core/errors.js'
+import { type DeedOptionCommand, decideDeedOptions } from './decide-options.js'
 import { futureFor, rentFutureMakeWhole } from './selectors.js'
 
 export interface OriginateRentFuture {
@@ -23,7 +24,7 @@ export interface SellRentFuture {
   readonly price: Money
 }
 
-export type MarketsCommand = OriginateRentFuture | SellRentFuture
+export type MarketsCommand = OriginateRentFuture | SellRentFuture | DeedOptionCommand
 
 /**
  * Deterministic identity. The engine has no source of randomness, so contract ids
@@ -161,6 +162,7 @@ export function decideMarkets(
   switch (cmd.type) {
     case 'OriginateRentFuture': return decideOriginate(state, cmd)
     case 'SellRentFuture': return decideSell(state, cmd)
+    default: return decideDeedOptions(state, cmd)
   }
 }
 
