@@ -1029,7 +1029,7 @@ futures and for valuing deeds in the draft:
 | Railroads (4) | 9.97% | 2.49% |
 | Orange (3) | 8.23% | **2.74%** |
 | Yellow (3) | 8.10% | 2.70% |
-| Red (3) | 8.02% | 2.67% |
+| Red (3) | 8.01% | 2.67% |
 | Green (3) | 7.74% | 2.58% |
 | Pink (3) | 7.25% | 2.42% |
 | Light Blue (3) | 6.82% | 2.27% |
