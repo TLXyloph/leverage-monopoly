@@ -161,6 +161,34 @@ test('the dice a facilitator types move the token they name', async ({ table }) 
   await expect(table.players.P2.getByText(/movement/).first()).toBeVisible()
 })
 
+/**
+ * An undo has to reach the SCREEN, not just the log.
+ *
+ * Every other undo assertion in this suite reads `table.state()` over HTTP, and all of
+ * them passed while the browser sat frozen on the pre-undo state: the client dropped any
+ * broadcast whose log was shorter than the last one it had seen, which is precisely the
+ * shape of every undo. Asserting through the API is what let it hide, so this one
+ * asserts through the four player views and the television.
+ */
+test('an undo reaches every screen, not just the log', async ({ table }) => {
+  await draftThroughApi(table)
+  const state = await table.state()
+  expect(state.phase).toBe('market')
+
+  await table.admin.getByRole('button', { name: 'Advance phase' }).click()
+  for (const player of PLAYERS) {
+    await expect(table.players[player].getByText(/round 1 of 24 · era 1 · open/)).toBeVisible()
+  }
+  await expect(table.tv.getByText('open')).toBeVisible()
+
+  await table.admin.getByRole('button', { name: 'Undo last command' }).click()
+
+  for (const player of PLAYERS) {
+    await expect(table.players[player].getByText(/round 1 of 24 · era 1 · market/)).toBeVisible()
+  }
+  await expect(table.tv.getByText('market')).toBeVisible()
+})
+
 test('a mistyped roll is undone whole, not one event at a time', async ({ table }) => {
   await draftThroughApi(table)
   await advanceTo(table, 'movement')

@@ -31,7 +31,7 @@ export function useGame(token: string | null): Game {
   const [error, setError] = useState<string | null>(null)
   const [rejection, setRejection] = useState<Rejection | null>(null)
   const [pending, setPending] = useState(false)
-  const latest = useRef(0)
+  const sawSocket = useRef(false)
 
   useEffect(() => {
     if (token === null) return undefined
@@ -48,19 +48,40 @@ export function useGame(token: string | null): Game {
      * a correct board rather than a spinner. The socket's first message supersedes it.
      */
     fetchSync(parsed.gameId, token)
-      .then((first) => { if (!cancelled) apply(first) })
+      .then((first) => { if (!cancelled) applyInitialFetch(first) })
       .catch((cause: unknown) => { if (!cancelled) setError(String((cause as Error).message)) })
 
-    const connection = connect(parsed.gameId, token, apply, setLive)
+    const connection = connect(parsed.gameId, token, applyFromSocket, setLive, (reason) => {
+      if (!cancelled) setError(reason)
+    })
     return () => {
       cancelled = true
       connection.close()
     }
 
-    function apply(next: Sync): void {
-      // Out-of-order delivery would rewind the board under the table's feet.
-      if (next.length < latest.current) return
-      latest.current = next.length
+    /**
+     * The socket is authoritative and its messages are ordered by the protocol, so every
+     * one is applied — INCLUDING one that shortens the log.
+     *
+     * A guard here that dropped any sync shorter than the last seen looked like
+     * protection against out-of-order delivery and was in fact a bug: undo truncates the
+     * log, so every client silently ignored the one broadcast that mattered most and
+     * froze on the pre-undo state until some later command pushed the length back past
+     * the old high-water mark. Undo is the facilitator's most-used control.
+     */
+    function applyFromSocket(next: Sync): void {
+      sawSocket.current = true
+      setSync(next)
+      setError(null)
+    }
+
+    /**
+     * The genuine race is the opening HTTP fetch landing AFTER the socket's first push.
+     * That one is worth guarding, and it is the only one — hence a flag rather than a
+     * comparison on log length.
+     */
+    function applyInitialFetch(next: Sync): void {
+      if (sawSocket.current) return
       setSync(next)
       setError(null)
     }

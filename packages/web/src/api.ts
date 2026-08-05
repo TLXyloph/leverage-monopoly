@@ -102,10 +102,22 @@ export interface Connection {
  * reconnect needs no replay negotiation and no missed-message window: whatever the
  * client's mirror was, the next message replaces it wholesale with the server's truth.
  */
+/**
+ * Close codes the server uses to refuse a socket outright. Retrying these is pointless
+ * and rude: a bad or expired token reconnected every 1.2 seconds forever, hammering an
+ * endpoint that will never accept it, with the client showing "reconnecting" instead of
+ * the reason.
+ */
+const TERMINAL_CLOSE: Readonly<Record<number, string>> = {
+  4401: 'That link is not valid for this game. Ask the facilitator for a fresh one.',
+  4404: 'That game no longer exists on this server.',
+}
+
 export function connect(
   gameId: string, token: string,
   onSync: (sync: Sync) => void,
   onStatus: (live: boolean) => void,
+  onFatal: (reason: string) => void,
 ): Connection {
   let socket: WebSocket | null = null
   let timer: number | undefined
@@ -121,9 +133,15 @@ export function connect(
     socket.addEventListener('message', (event) => {
       onSync(JSON.parse(String(event.data)) as Sync)
     })
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       onStatus(false)
       if (closed) return
+      const terminal = TERMINAL_CLOSE[event.code]
+      if (terminal !== undefined) {
+        closed = true
+        onFatal(terminal)
+        return
+      }
       timer = window.setTimeout(open, 1200)
     })
   }
