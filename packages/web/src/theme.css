@@ -1,0 +1,127 @@
+@import 'tailwindcss';
+
+/**
+ * The visual language of a securities offering memorandum: ledger paper, engraved rules,
+ * safety green as the structural accent, oxblood reserved STRICTLY for risk — a margin
+ * call, an audit probability, a default. If oxblood appears anywhere that is not a
+ * hazard, the one colour that means "stop" stops meaning anything.
+ *
+ * Half of every screen is money, so digits are tabular everywhere and never reflow as
+ * they change.
+ */
+@theme {
+  --color-ledger: #f4f1e8;
+  --color-ledger-rule: #ddd6c3;
+  --color-ledger-deep: #eae5d6;
+  --color-ink: #1c1a15;
+  --color-ink-soft: #55503f;
+  --color-ink-faint: #8b8570;
+  --color-safety: #1b5e43;
+  --color-safety-soft: #d7e5dd;
+  --color-oxblood: #7b1e1e;
+  --color-oxblood-soft: #f0dcdc;
+  --color-brass: #9a7b28;
+
+  --font-sans: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Consolas', ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 27px,
+      color-mix(in srgb, #1b5e43 7%, transparent) 27px 28px
+    ),
+    #f4f1e8;
+  color: #1c1a15;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', Palatino, Georgia, serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  /** Every digit that can change sits in one of these, so columns never jitter. */
+  .num {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .panel {
+    background: #fbfaf5;
+    border: 1px solid #ddd6c3;
+    box-shadow: 0 1px 0 rgb(28 26 21 / 6%);
+  }
+
+  .rule-top {
+    border-top: 2px solid #1b5e43;
+  }
+
+  /** The engraved label of a memorandum column heading. */
+  .legend {
+    font-family: 'SF Mono', 'Menlo', 'Consolas', ui-monospace, monospace;
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #55503f;
+  }
+
+  .btn {
+    border: 1px solid #1b5e43;
+    color: #1b5e43;
+    background: #fbfaf5;
+    padding: 0.4rem 0.75rem;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: #1b5e43;
+    color: #f4f1e8;
+  }
+
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+
+  .btn-risk {
+    border-color: #7b1e1e;
+    color: #7b1e1e;
+  }
+
+  .btn-risk:hover:not(:disabled) {
+    background: #7b1e1e;
+    color: #f4f1e8;
+  }
+
+  .field {
+    border: 1px solid #ddd6c3;
+    background: #fff;
+    padding: 0.3rem 0.5rem;
+    font-family: 'SF Mono', 'Menlo', 'Consolas', ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+    width: 100%;
+  }
+
+  .field:focus {
+    outline: 2px solid #1b5e43;
+    outline-offset: -1px;
+  }
+}
