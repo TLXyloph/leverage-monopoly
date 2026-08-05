@@ -14,24 +14,36 @@ Four things ship:
 
 | Part | Status |
 |---|---|
-| **Rules engine** — pure, deterministic, event-sourced | ✅ **complete, merged, 715 tests** |
-| **Player rulebook** — web artifact | ✅ **published** |
-| **Server** — persistence, real-time, HTTP API | ❌ not started |
-| **Web frontend** — admin console, 4 player views, projector | ❌ not started |
-| **E2E suite** — Playwright, 5 concurrent browser contexts | ❌ not started |
+| **Rules engine** — pure, deterministic, event-sourced | ✅ complete, 715 tests |
+| **Player rulebook** — web artifact | ✅ published |
+| **Server** — persistence, real-time, HTTP API | ✅ complete, 40 tests |
+| **Web frontend** — admin console, 4 player views, projector | ✅ complete |
+| **E2E suite** — Playwright, 5 concurrent browser contexts | ✅ complete, 25 scenarios |
+| **Facilitator skill** — `.claude/skills/leverage-facilitator/` | ✅ complete |
 
-The game is **playable today by hand** using the published rulebook. The remaining work
-replaces manual bookkeeping with software.
+**All four parts ship.** `npm run game` starts the server, opens a table and prints four
+QR codes. The game is playable at a physical board with the app owning every dollar.
 
 ---
 
 ## Current state
 
 ```
-branch      main @ 0889686 — 55 commits ahead of origin/main (NOT PUSHED)
-tests       715 passing across 48 files
-gates       npm run lint · typecheck · build · test — all clean
+branch      main — ahead of origin/main (NOT PUSHED)
+tests       755 unit/property across 55 files + 25 Playwright scenarios
+gates       npm run lint · typecheck · build · test · test:e2e — all clean
 engine      packages/engine — 81 source files, zero runtime dependencies
+server      packages/server — Fastify + ws + better-sqlite3 + Zod
+web         packages/web — React + Vite + Tailwind, one bundle, three shells
+```
+
+### Running it
+
+```bash
+npm ci && npm run build
+npm run game            # server + table + four QR codes
+npm run dev:web         # Vite on :5178, proxying the API to :5177
+PLAYWRIGHT_CHANNEL=chrome npm run test:e2e   # uses installed Chrome, downloads nothing
 ```
 
 **The remote is behind.** `main` was merged locally at the user's request and never
@@ -56,11 +68,12 @@ names and superseded numbers — they were authored in parallel before the spec 
 
 ### Subsystem briefs
 
+The three briefs below described work that is now done. They remain accurate as
+statements of intent and are worth reading before changing any of the three subsystems.
+
 - [`docs/handoffs/server.md`](docs/handoffs/server.md)
 - [`docs/handoffs/web.md`](docs/handoffs/web.md)
 - [`docs/handoffs/e2e.md`](docs/handoffs/e2e.md)
-
-Build them in that order. The web frontend needs the server's API; E2E needs both.
 
 ---
 
@@ -198,14 +211,44 @@ Each remaining subsystem deserves its own spec → plan → build cycle.
 
 ---
 
-## Next steps
+## What the remaining subsystems added
 
-1. **Server** (`docs/handoffs/server.md`) — Fastify, WebSocket, SQLite event log, HTTP API
-   for the Claude Code facilitator skill. No LLM dependency, no API keys.
-2. **Web frontend** (`docs/handoffs/web.md`) — `/admin`, `/p/:token`, `/table`. Players act
-   in their own views; admin has full override. Assist panel shows the math, never the move.
-3. **E2E** (`docs/handoffs/e2e.md`) — Playwright, 5 concurrent contexts, including a full
-   scripted 24-round game asserting exact final net worths.
+**Server** (`packages/server`). Fastify + WebSocket + better-sqlite3 + Zod. The event log
+is the database; snapshots are a cache written only when the JSON round trip is provably
+lossless, so a stale one cannot exist. Undo rewinds a whole COMMAND, not an event — a
+dice roll emits five or six, and rewinding one leaves a state nobody at the table
+recognises. Every path dispatches through the `decide*Action` composition roots.
+
+**Web** (`packages/web`). React + Vite + Tailwind, one bundle, three shells. Era gating
+reads the engine's `unlockedInstruments`; `UNLOCK_ERA` moved into the broadcast payload so
+the client labels a locked action without keeping a second copy of the table.
+
+**E2E** (`tests/e2e`). 25 scenarios, five concurrent browser contexts, against the built
+bundle served by Fastify — not Vite's dev server, because what the table loads is the
+thing worth testing.
+
+### Two defects this work found, both of the familiar shape
+
+**`exhaustLiquidation` had no non-test caller.** Spec section 5's second stop condition:
+a player whose last deed sells short has the residual written down to distressed debt.
+The function was written, unit-tested, reviewed and exported, and nothing called it — so a
+player who lost their whole portfolio stayed flagged forever with a live shortfall and no
+lot left to auction, and `CreditWrittenDown` (with it the entire distressed-debt path in
+spec 19.7) was unreachable in a real game. Now wired at both seams: `SettleLiquidationLot`
+when the sale empties the portfolio, and Open-phase entry for a player with no deeds at
+all. Two engine tests that had encoded the old behaviour now assert the new one **from
+the decider**, not from a direct call, so they prove the wiring rather than the function.
+
+**`submit-draft` had no UI, and `ReorderDeck` had no control anywhere.** The game could
+not be started from a browser at all, and E3-05 was a card that could be drawn and never
+applied. Found by writing `tests/e2e/reachability.spec.ts`, which now asserts that every
+command in `wireCommandSchema` is reachable from a control and fails naming any that is
+not. `RunAuditChecks` is the one deliberate exception, documented in that file.
+
+Both were found the same way the engine's six were: **by driving complete games and
+asking what never fired**, not by reading diffs. Two audits now do that continuously —
+`packages/server/tests/coverage.test.ts` for the event union (70 of 72 variants reachable,
+2 documented with reasons) and the E2E reachability spec for the command union.
 
 ### Known-inert, documented, non-blocking
 
@@ -221,3 +264,18 @@ features if you want them.
 - Four test files exceed the 500-line guideline
 - `.eslintrc.json` matches the import *string* `contexts/*/*`, so `'../credit/selectors.js'`
   evades the encapsulation rule
+- **No raw field editing in the admin console.** The web brief asked for view-and-edit
+  override of any player's cash, deeds, heat and debt; it is deliberately absent. Every
+  dollar has a named counterparty and one conserved quantity holds across the whole log,
+  so a raw edit would break it silently and permanently. Act-on-behalf plus undo covers
+  every correction a table actually needs. Confirmed with the user.
+- **`npm run game` prints LAN URLs, not an ngrok tunnel, by default.** The spec assumed
+  ngrok needed no account; that stopped being true in 2023. Four people at one board are
+  on the same Wi-Fi by definition, so a LAN address needs no account, no token and no
+  third party. `--tunnel` with `NGROK_AUTHTOKEN` set opts back in.
+- The generated ruleset under `.claude/skills/leverage-facilitator/reference/ruleset/` is
+  a committed artifact of `/api/rules/:topic`. Regenerate it with the sibling
+  `offline-ruleset.sh` whenever the economy is retuned.
+- E2E runs against installed Chrome when `PLAYWRIGHT_CHANNEL=chrome` is set; CI leaves it
+  unset and uses the bundled Chromium. Traces are opt-in via `PLAYWRIGHT_TRACE=1` — a
+  five-context suite writes hundreds of megabytes of trace per failing run.
