@@ -36,7 +36,24 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      # Chromium is ~180 MB and does not change between runs; only the Playwright
+      # version can invalidate it, so that is what the key is derived from. Without
+      # this the job re-downloaded the browser on every single push.
+      - name: Resolve the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Restore the browser cache
+        id: browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: steps.browsers.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+      # The OS libraries Chromium links against are apt packages, not part of the cached
+      # directory, so this runs on a cache hit too. It is seconds, not minutes.
+      - run: npx playwright install-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()

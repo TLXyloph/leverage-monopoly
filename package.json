@@ -17,7 +17,7 @@
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "lint": "eslint packages tests --ext .ts,.tsx",
-    "typecheck": "tsc --build --force && tsc -p packages/engine/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && tsc -p packages/web/tsconfig.json"
+    "typecheck": "tsc --build && tsc -p packages/engine/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && npm run typecheck --workspace @leverage/web"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

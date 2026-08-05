@@ -16,5 +16,18 @@
    * different plugin errors that says nothing about the application. Vite compiles the
    * config with esbuild at startup regardless.
    */
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  /**
+   * These express the dependency and let an editor jump to SOURCE rather than to a
+   * `.d.ts`. They do NOT make staleness an error, and it is worth being exact about that:
+   * TS6305 is only enforced for `composite` projects, and this one is not composite
+   * (`noEmit`, bundled by Vite), so `tsc -p` here happily type-checks against a `dist/`
+   * that has drifted from its `src/`. Measured, not assumed — deleting a server
+   * declaration produces downstream `TS18046`s rather than a staleness error.
+   *
+   * What actually keeps this honest is the `typecheck` script in this package, which
+   * builds `engine` and `server` from source before checking anything against them. That
+   * ordering is the guarantee; this list is documentation and editor ergonomics.
+   */
+  "references": [{ "path": "../engine" }, { "path": "../server" }]
 }

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json --noEmit && vite build",
-    "preview": "vite preview"
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --build ../engine ../server && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@leverage/engine": "*",

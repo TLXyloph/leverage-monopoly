@@ -277,5 +277,17 @@ features if you want them.
   a committed artifact of `/api/rules/:topic`. Regenerate it with the sibling
   `offline-ruleset.sh` whenever the economy is retuned.
 - E2E runs against installed Chrome when `PLAYWRIGHT_CHANNEL=chrome` is set; CI leaves it
-  unset and uses the bundled Chromium. Traces are opt-in via `PLAYWRIGHT_TRACE=1` — a
-  five-context suite writes hundreds of megabytes of trace per failing run.
+  unset and uses the bundled Chromium, cached on the Playwright version. Traces are opt-in
+  via `PLAYWRIGHT_TRACE=1` — a five-context suite writes hundreds of megabytes of trace
+  per failing run.
+- **`npm run typecheck` emits.** `tsc --build` writes `dist/` as a side effect, because the
+  `-p` test configs consume the composite projects and TypeScript requires their declared
+  outputs to exist. That is inherent to project references, not a bug to chase; it is no
+  longer *forced*, so it is incremental rather than a full rebuild every run.
+- **Only `npm run typecheck` checks the web package.** Its `build` is `vite build` alone —
+  Vite strips types without checking them. `tsc -p packages/web/tsconfig.json` run bare is
+  not a supported entry point either: it resolves `@leverage/engine` and
+  `@leverage/server` to whatever is sitting in `dist/` and will happily pass against stale
+  declarations, because TS6305 is only enforced for composite projects and web is not one.
+  The package's own `typecheck` script builds both from source first, which is what makes
+  it trustworthy.
