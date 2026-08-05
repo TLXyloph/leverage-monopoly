@@ -17,7 +17,7 @@
  */
 import { spawn } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
-import { existsSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import qrcode from 'qrcode-terminal'
@@ -112,6 +112,18 @@ const response = await fetch(`http://127.0.0.1:${port}/api/games`, {
 const game = await response.json()
 
 const base = wantsTunnel ? (await openTunnel()) ?? `http://${lanAddress()}:${port}` : `http://${lanAddress()}:${port}`
+
+/**
+ * Recorded so `npm run facilitate` can attach without anyone copying a token by hand.
+ * Gitignored: it holds the bearer tokens for every seat at the table.
+ */
+writeFileSync(
+  resolve(root, '.leverage-session.json'),
+  `${JSON.stringify({
+    gameId: game.gameId, roomCode: game.roomCode, tokens: game.tokens,
+    api: `http://127.0.0.1:${port}`, base,
+  }, null, 2)}\n`,
+)
 
 const rule = '─'.repeat(64)
 process.stdout.write(`\n${GREEN}${rule}${OFF}\n`)

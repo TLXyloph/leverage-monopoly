@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc --build && npm run build --workspace @leverage/web",
     "game": "node scripts/game.mjs",
+    "facilitate": "node scripts/facilitate.mjs",
     "dev:server": "node --watch packages/server/dist/main.js",
     "dev:web": "npm run dev --workspace @leverage/web",
     "test": "vitest run",

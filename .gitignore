@@ -20,3 +20,4 @@ test-results/
 .vite/
 .turbo/
 *.tsbuildinfo
+.leverage-session.json
