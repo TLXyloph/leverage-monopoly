@@ -3,7 +3,9 @@ import type { GameEvent } from '../../core/events.js'
 import type { GameConfig, GameState } from '../../core/state.js'
 import type { Phase } from '../../core/types.js'
 import { reject, type Rejection } from '../../core/errors.js'
-import { advanceEraIIStimulus } from '../credit/index.js'
+import {
+  advanceEraIIStimulus, exhaustLiquidation, playersAwaitingLiquidation,
+} from '../credit/index.js'
 import { eraForRound } from './selectors.js'
 import type { SettlementInput } from './settlement.js'
 import { runFinalSettlement, runSettlement } from './settlement.js'
@@ -77,5 +79,23 @@ export function decideSession(
   if (next === undefined) {
     return reject('WRONG_PHASE', `Nothing follows the ${state.phase} phase.`)
   }
-  return [{ type: 'PhaseAdvanced', phase: next }]
+  const events: GameEvent[] = [{ type: 'PhaseAdvanced', phase: next }]
+  /**
+   * Spec section 5 / 19.7. Forced liquidation runs during the Open phase, and its second
+   * stop condition is an EMPTY portfolio: a flagged player with nothing left to auction
+   * has their residual shortfall written down to distressed debt here, at the moment the
+   * phase they would have been liquidated in opens.
+   *
+   * `exhaustLiquidation` documented itself as "called at the start of the Open phase once
+   * the auction has emptied the queue" and had no caller anywhere outside its own tests,
+   * so a player who lost their whole portfolio simply stayed flagged forever with no lot
+   * to sell. Each player is evaluated against the same pre-transition state: one player's
+   * write-down cannot change another's shortfall, so no fold is needed between them.
+   */
+  if (next === 'open') {
+    for (const player of playersAwaitingLiquidation(state)) {
+      events.push(...exhaustLiquidation(state, player))
+    }
+  }
+  return events
 }

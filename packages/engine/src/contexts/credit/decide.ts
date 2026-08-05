@@ -6,6 +6,7 @@ import type { GameState } from '../../core/state.js'
 import type { DeedId, Money, PlayerId } from '../../core/types.js'
 import { decidePeerLoan, type PeerLoanCommand } from './decide-loans.js'
 import { reduceCredit } from './reduce.js'
+import { exhaustLiquidation } from './settlement.js'
 import {
   creditHeadroom, groupBuildingStrip, isUnderMarginCall,
   liquidationPrice, liquidationQueue, playersAwaitingLiquidation,
@@ -199,9 +200,24 @@ export function decideCredit(
       events.push(sale)
       working = reduceCredit(working, sale)
 
-      // 4. stop the auction if the proceeds cured the position
+      /**
+       * 4. stop the auction — cured by the proceeds, or wound up because the portfolio
+       * is now empty and a shortfall remains.
+       *
+       * The second branch is spec section 5's SECOND stop condition, and it had no call
+       * site anywhere: `exhaustLiquidation` was written, unit-tested, reviewed and
+       * exported, and every caller outside its own test file was zero. A player whose
+       * last deed sold for less than they owed stayed permanently flagged with a live
+       * shortfall and no remaining lot to auction — the position could never resolve, and
+       * `CreditWrittenDown` (and with it the whole distressed-debt path in spec 19.7)
+       * was unreachable in a real game. Found by driving complete games through the
+       * server rather than by reading the diff, which is the only way this shape of
+       * defect ever surfaces.
+       */
       if (!isUnderMarginCall(working, command.player)) {
         events.push({ type: 'MarginCallCured', player: command.player })
+      } else {
+        events.push(...exhaustLiquidation(working, command.player))
       }
       return events
     }

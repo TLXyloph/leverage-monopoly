@@ -13,6 +13,9 @@ coverage/
 data/
 playwright-report/
 test-results/
+.e2e/
+*.db-wal
+*.db-shm
 .superpowers/
 .vite/
 .turbo/

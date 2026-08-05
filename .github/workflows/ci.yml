@@ -19,3 +19,28 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    # The E2E suite drives the BUILT bundle through five concurrent browser contexts, so
+    # it needs the same build `verify` proves compiles. Its own job rather than more
+    # steps on that one: a browser download plus 25 five-context scenarios roughly
+    # doubles the wall clock, and a failure here means something different from a failing
+    # unit test — the mechanics are proven in `verify`, so a red here is the UI or the
+    # wiring between the layers.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "allowImportingTsExtensions": true
+  },
+  /**
+   * `vite.config.ts` is deliberately outside the program. Vitest at the repo root and
+   * Vite here resolve to different major versions of the same package, and type-checking
+   * a config that imports both produces a wall of structurally-identical-but-nominally-
+   * different plugin errors that says nothing about the application. Vite compiles the
+   * config with esbuild at startup regardless.
+   */
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
