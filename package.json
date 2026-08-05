@@ -9,19 +9,29 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --build && npm run build --workspace @leverage/web",
+    "game": "node scripts/game.mjs",
+    "dev:server": "node --watch packages/server/dist/main.js",
+    "dev:web": "npm run dev --workspace @leverage/web",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
-    "lint": "eslint packages --ext .ts",
-    "typecheck": "tsc --build --force && tsc -p packages/engine/tsconfig.test.json"
+    "lint": "eslint packages tests --ext .ts,.tsx",
+    "typecheck": "tsc --build --force && tsc -p packages/engine/tsconfig.test.json && tsc -p packages/server/tsconfig.test.json && tsc -p packages/web/tsconfig.json"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "eslint": "^8.57.1",
     "fast-check": "^3.23.1",
+    "qrcode-terminal": "^0.12.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "esbuild@0.25.12": true
   }
 }
