@@ -198,6 +198,24 @@ export class Store {
     run()
   }
 
+  /**
+   * Removes a game and everything derived from it, in one transaction.
+   *
+   * There is no foreign key between `events` and `games` — the log is append-only and
+   * deliberately knows nothing about the row that names it — so all four tables have to
+   * be swept explicitly. Missing one would strand events that no game lists, which
+   * `readEvents` would happily replay into a game that no longer exists.
+   */
+  deleteGame(gameId: string): void {
+    const run = this.db.transaction((): void => {
+      for (const table of ['events', 'snapshots', 'commands'] as const) {
+        this.db.prepare(`DELETE FROM ${table} WHERE game_id = ?`).run(gameId)
+      }
+      this.db.prepare('DELETE FROM games WHERE id = ?').run(gameId)
+    })
+    run()
+  }
+
   putSnapshot(gameId: string, seq: number, state: unknown): void {
     this.db
       .prepare('INSERT OR REPLACE INTO snapshots (game_id, seq, state) VALUES (?, ?, ?)')

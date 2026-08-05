@@ -67,6 +67,48 @@ describe('persistence', () => {
     }
   })
 
+  /**
+   * `deleteGame` sweeps four tables by hand because there is no foreign key tying the
+   * log to the row that names it — the log is append-only and deliberately knows nothing
+   * about the game record. Missing one table would strand events no game lists, which
+   * `readEvents` would happily replay into a game that no longer exists.
+   */
+  it('deleting a game leaves nothing of it behind, and touches no other game', async () => {
+    await runDraft(h)
+    await playRound(h, SAFE_ROLLS)
+
+    const other = await startHarness()
+    try {
+      await runDraft(other)
+      const store = new Store(h.databaseFile)
+      try {
+        expect(store.readEvents(h.gameId).length).toBeGreaterThan(0)
+        expect(store.readCommands(h.gameId).length).toBeGreaterThan(0)
+        expect(store.latestSnapshot(h.gameId, 10_000)).not.toBeNull()
+
+        store.deleteGame(h.gameId)
+
+        expect(store.findGame(h.gameId)).toBeNull()
+        expect(store.readEvents(h.gameId)).toEqual([])
+        expect(store.readCommands(h.gameId)).toEqual([])
+        expect(store.latestSnapshot(h.gameId, 10_000)).toBeNull()
+        expect(store.listGames().some((g) => g.id === h.gameId)).toBe(false)
+      } finally {
+        store.close()
+      }
+
+      // The other table is untouched and still replays to the state it was in.
+      const survivor = new Store(other.databaseFile)
+      try {
+        expect(survivor.readEvents(other.gameId).length).toBeGreaterThan(0)
+      } finally {
+        survivor.close()
+      }
+    } finally {
+      await other.close()
+    }
+  })
+
   it('player tokens survive a restart, so the QR code on the table keeps working', async () => {
     const token = h.tokens.players.P1
     h = await h.reopen()

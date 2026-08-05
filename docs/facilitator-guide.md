@@ -213,6 +213,40 @@ Two knobs, both set when you open the table:
 
 ---
 
+## The tables on your machine
+
+Games are kept, not cleaned up — a finished 24-round game is 652 events and about 41 KB,
+so a thousand of them would fit in 40 MB, and the log is the only complete record of what
+happened.
+
+```bash
+npm run tables                       # every table, with the round each reached
+npm run tables -- --save A2V6        # write saves/A2V6-r14.json
+npm run tables -- --load saves/…     # open a saved log as a new table
+npm run tables -- --delete A2V6      # remove one
+npm run tables -- --prune            # remove all but the one you are playing
+```
+
+A save file is just the event log, and that is enough to reconstruct the game exactly —
+every die roll, shuffle order and audit roll is IN the log rather than derived from a
+seed nobody kept. Loading one gives it a fresh room code and fresh links; the original
+stays where it was.
+
+Deleting the table the server is currently serving is refused unless you stop the server
+first. It holds that game in memory and would keep writing events for a row that no
+longer exists.
+
+## Stopping the server
+
+Ctrl-C in the terminal running `npm run game`. If it was started somewhere you cannot
+reach:
+
+```bash
+pkill -f "scripts/game.mjs"; pkill -f "packages/server/dist/main.js"
+```
+
+Restarting resumes the same table. `npm run game -- --new` opens a fresh one instead.
+
 ## If the app misbehaves
 
 `npm run facilitate` prints what the server thinks is true. If that disagrees with a

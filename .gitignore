@@ -21,3 +21,4 @@ test-results/
 .turbo/
 *.tsbuildinfo
 .leverage-session.json
+saves/
