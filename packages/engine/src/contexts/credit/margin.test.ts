@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { ECONOMY } from '../../config/economy.js'
+import type { GameEvent } from '../../core/events.js'
 import type { GameState } from '../../core/state.js'
 import type { CreditPorts } from './decide.js'
 import { decideCredit } from './decide.js'
@@ -157,9 +158,18 @@ describe('forced liquidation at the start of the Open phase (spec 19.8)', () => 
     let s = table
     const shortfalls = [marginShortfall(s, 'P1')]
     for (const lot of ['boardwalk', 'park-place']) {
-      s = applyAll(s, eventsOf(decideCredit(s, {
+      const batch = eventsOf(decideCredit(s, {
         type: 'SettleLiquidationLot', player: 'P1', deed: lot, bids: [], // bank at the floor
-      })))
+      }))
+      /**
+       * Measured against the SALE alone. Selling the last lot also winds the position up
+       * (`CreditWrittenDown`), which zeroes the drawn balance — a real and correct
+       * outcome, but not one this property is about: convergence is the claim that each
+       * SALE narrows the gap, and folding the wind-up in would hide a divergent floor
+       * behind a write-down.
+       */
+      const throughSale = batch.slice(0, batch.findIndex((e) => e.type === 'DeedLiquidated') + 1)
+      s = applyAll(s, throughSale)
       shortfalls.push(marginShortfall(s, 'P1'))
     }
     expect(shortfalls).toEqual([238, 218, 200])
@@ -351,23 +361,33 @@ describe('the second stop condition: no unmortgaged deeds left (spec section 5)'
       { P1: { drawnCredit: 800, marginCallFlaggedAt: 5, cleanCash: 0 } },
     )
     let s = start
+    const batches: (readonly GameEvent[])[] = []
     for (const lot of ['boardwalk', 'park-place']) {
-      s = applyAll(s, eventsOf(decideCredit(s, {
+      const batch = eventsOf(decideCredit(s, {
         type: 'SettleLiquidationLot', player: 'P1', deed: lot, bids: [],
-      })))
+      }))
+      batches.push(batch)
+      s = applyAll(s, batch)
     }
-    expect(s.players.P1.drawnCredit).toBe(200)
-    expect(liquidationQueue(s, 'P1')).toEqual([])
 
-    const wind = exhaustLiquidation(s, 'P1')
-    expect(wind).toEqual([
+    /**
+     * The decider itself winds the position up on the lot that empties the portfolio.
+     * It did not, for the whole of the engine's development: `exhaustLiquidation` was
+     * written, tested and exported with no caller outside this file, so a player whose
+     * last deed sold short stayed flagged forever with a live shortfall and no lot left
+     * to auction. Asserting it from the DECIDER, not from a direct call to
+     * `exhaustLiquidation`, is what makes this test prove the wiring rather than the
+     * function.
+     */
+    expect(batches[1]).toEqual([
+      { type: 'DeedLiquidated', player: 'P1', deed: 'park-place', buyer: 'bank', price: 280 },
       { type: 'CreditWrittenDown', player: 'P1', amount: 200 },
       { type: 'MarginCallCured', player: 'P1' },
     ])
-    const done = applyAll(s, wind)
-    expect(done.players.P1.drawnCredit).toBe(0)
-    expect(done.players.P1.distressedDebt).toBe(200)
-    expect(done.players.P1.marginCallFlaggedAt).toBe(null)
+    expect(liquidationQueue(s, 'P1')).toEqual([])
+    expect(s.players.P1.drawnCredit).toBe(0)
+    expect(s.players.P1.distressedDebt).toBe(200)
+    expect(s.players.P1.marginCallFlaggedAt).toBe(null)
   })
 
   it('treats a portfolio of only mortgaged deeds as exhausted', () => {
