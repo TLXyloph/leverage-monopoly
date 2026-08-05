@@ -1,5 +1,16 @@
 {
   "extends": "./tsconfig.base.json",
   "files": [],
-  "references": [{ "path": "packages/engine" }]
+  /**
+   * `tsc --build` — the first step of both `npm run build` and `npm run typecheck` —
+   * walks THIS list, not the workspace globs, so every composite package must appear
+   * here. While server was missing, its `dist/` only existed on machines that had run
+   * its build by hand, and a clean checkout failed in CI: TS6305 from the test
+   * tsconfigs and TS2307 from web resolving `@leverage/server` to a `dist/` that was
+   * never emitted. Listing order is irrelevant — build order (engine before server)
+   * comes from each package's own `references`. `packages/web` is deliberately absent:
+   * it is not a composite project (`noEmit`, bundled by Vite), so `tsc --build` cannot
+   * drive it and the root build script invokes its workspace build instead.
+   */
+  "references": [{ "path": "packages/engine" }, { "path": "packages/server" }]
 }
