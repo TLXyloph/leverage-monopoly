@@ -17,7 +17,7 @@
  */
 import { spawn } from 'node:child_process'
 import { networkInterfaces } from 'node:os'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import qrcode from 'qrcode-terminal'
@@ -104,12 +104,53 @@ async function openTunnel() {
 
 await waitForServer()
 
-const response = await fetch(`http://127.0.0.1:${port}/api/games`, {
+const sessionFile = resolve(root, '.leverage-session.json')
+
+/**
+ * Resume the table this machine last opened, rather than starting a fresh one.
+ *
+ * Restarting is not an unusual event — you move to the host's Wi-Fi, the laptop sleeps,
+ * a tunnel drops — and the printed URLs embed whatever IP the machine had at the time,
+ * so a restart is exactly when you need them reprinted. Creating a new game every launch
+ * meant a mid-game restart handed the table four QR codes for an empty board while the
+ * real game sat in the database, reachable only by whoever still had the old links open.
+ *
+ * The tokens come from the session file because the server never stores them; they are
+ * HMAC'd from a secret it persists, so the ones written last time remain valid for as
+ * long as the game exists. `--new` forces a fresh table.
+ */
+async function resumable() {
+  if (process.argv.includes('--new')) return null
+  let saved
+  try {
+    saved = JSON.parse(readFileSync(sessionFile, 'utf8'))
+  } catch {
+    return null
+  }
+  const known = await fetch(`http://127.0.0.1:${port}/api/games`).then((r) => r.json())
+  const match = known.games?.find((g) => g.id === saved.gameId)
+  if (match === undefined) return null
+  return {
+    gameId: saved.gameId,
+    roomCode: match.roomCode,
+    tokens: saved.tokens,
+    urls: {
+      admin: `/admin?token=${saved.tokens.admin}`,
+      table: `/table?token=${saved.tokens.table}`,
+      players: Object.fromEntries(
+        Object.entries(saved.tokens.players).map(([p, t]) => [p, `/p/${t}`]),
+      ),
+    },
+    resumed: true,
+  }
+}
+
+const existing = await resumable()
+const game = existing ?? await fetch(`http://127.0.0.1:${port}/api/games`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ label: 'LEVERAGE', unlockMode: 'progressive' }),
-})
-const game = await response.json()
+}).then((r) => r.json())
 
 const base = wantsTunnel ? (await openTunnel()) ?? `http://${lanAddress()}:${port}` : `http://${lanAddress()}:${port}`
 
@@ -118,7 +159,7 @@ const base = wantsTunnel ? (await openTunnel()) ?? `http://${lanAddress()}:${por
  * Gitignored: it holds the bearer tokens for every seat at the table.
  */
 writeFileSync(
-  resolve(root, '.leverage-session.json'),
+  sessionFile,
   `${JSON.stringify({
     gameId: game.gameId, roomCode: game.roomCode, tokens: game.tokens,
     api: `http://127.0.0.1:${port}`, base,
@@ -127,7 +168,10 @@ writeFileSync(
 
 const rule = '─'.repeat(64)
 process.stdout.write(`\n${GREEN}${rule}${OFF}\n`)
-process.stdout.write(`${BOLD}  LEVERAGE${OFF}   room ${BOLD}${game.roomCode}${OFF}\n`)
+process.stdout.write(
+  `${BOLD}  LEVERAGE${OFF}   room ${BOLD}${game.roomCode}${OFF}`
+  + `${game.resumed === true ? `   ${DIM}resumed — same table, same links${OFF}` : ''}\n`,
+)
 process.stdout.write(`${GREEN}${rule}${OFF}\n\n`)
 process.stdout.write(`  ${BOLD}Facilitator${OFF}  ${base}${game.urls.admin}\n`)
 process.stdout.write(`  ${BOLD}Television${OFF}   ${base}${game.urls.table}\n\n`)
@@ -145,4 +189,5 @@ for (const [player, path] of Object.entries(game.urls.players)) {
 }
 
 process.stdout.write(`${GREEN}${rule}${OFF}\n`)
-process.stdout.write(`${DIM}  Database: ${resolve(root, 'leverage.db')} — ctrl-c to stop.${OFF}\n\n`)
+process.stdout.write(`${DIM}  Database: ${resolve(root, 'leverage.db')} — ctrl-c to stop.${OFF}\n`)
+process.stdout.write(`${DIM}  Restarting resumes this table. \`npm run game -- --new\` starts a fresh one.${OFF}\n\n`)

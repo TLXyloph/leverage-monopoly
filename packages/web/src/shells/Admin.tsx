@@ -88,19 +88,31 @@ export function AdminShell({ token }: { token: string }): ReactNode {
               own view at the same time.
             </p>
           </Panel>
-          <DraftPanel
-            sync={sync}
-            me={actAs}
-            disabled={game.pending}
-            onSubmit={(command) => { void game.send(command) }}
-          />
-          {sync.assist[actAs] !== undefined && <Warnings assist={sync.assist[actAs]} />}
-          <ActionPanel
-            sync={sync}
-            me={actAs}
-            disabled={game.pending}
-            onSubmit={(command) => { void game.send(command) }}
-          />
+          {/**
+            * Keyed on the acting player so every form below REMOUNTS when the selector
+            * moves. Without it React reuses the component instances — they sit at the
+            * same position in the tree — and each one's half-typed local state follows
+            * the facilitator to the next player. A $777 bid typed against P1 reappeared
+            * under P3's name, looking exactly like something the facilitator had just
+            * entered, which is how you draw credit on the wrong person's line and never
+            * notice. Remounting is the whole fix: per-player form state should not
+            * outlive the player it belongs to.
+            */}
+          <div key={actAs} className="space-y-4">
+            <DraftPanel
+              sync={sync}
+              me={actAs}
+              disabled={game.pending}
+              onSubmit={(command) => { void game.send(command) }}
+            />
+            {sync.assist[actAs] !== undefined && <Warnings assist={sync.assist[actAs]} />}
+            <ActionPanel
+              sync={sync}
+              me={actAs}
+              disabled={game.pending}
+              onSubmit={(command) => { void game.send(command) }}
+            />
+          </div>
         </div>
       </div>
 
